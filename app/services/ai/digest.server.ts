@@ -1,4 +1,5 @@
 import { requirePlanFeature } from "../billing.server";
+import { requireReadyReport } from "../report-readiness.server";
 import prisma from "../../db.server";
 import { logger } from "../../lib/logger.server";
 import { previousPeriod, resolvePeriod } from "../../lib/dates";
@@ -49,6 +50,7 @@ export async function generateWeeklyDigest(
     select: { ianaTimezone: true, aiEnabled: true },
   });
   const period = resolvePeriod("7d", store.ianaTimezone);
+  await requireReadyReport(storeId, period);
   const existing = await prisma.intelligenceDigest.findUnique({
     where: {
       storeId_kind_periodStart: {

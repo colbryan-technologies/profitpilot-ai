@@ -66,7 +66,7 @@ describe.skipIf(process.env.RUN_INTEGRATION_TESTS !== "1")(
     it("omits inaccessible comparisons instead of inventing zero previous profit", async () => {
       const g = await buildGrounding(storeId, "30d");
       expect(g.deltas.netProfit.previous).toBe(
-        "Unavailable under current history allowance",
+        "Unavailable: history or data readiness",
       );
       expect(g.deltas.netProfit.changePct).toBeNull();
       expect(g.drivers).toEqual([]);

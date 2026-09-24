@@ -4,6 +4,7 @@ import {
   reportWindow,
   monthlyOrderUsage,
 } from "../services/report-access.server";
+import { reportReadiness } from "../services/report-readiness.server";
 import prisma from "../db.server";
 import { tenant, requestPeriod } from "../services/tenant.server";
 import { periodSummary } from "../services/profit/reporting.server";
@@ -50,6 +51,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }),
   ]);
   return {
+    readiness: await reportReadiness(store.id, period),
     usage: await monthlyOrderUsage(store.id),
     summary,
     period: period.key,
@@ -64,7 +66,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export default function Dashboard() {
   const d = useLoaderData<typeof loader>();
-  const ready = !!d.sync && d.snapshots.length > 0;
+  const ready = d.readiness.ready;
   const money = (n: number) =>
     ready ? formatMoney(n, d.summary.currency) : "—";
   return (
@@ -85,6 +87,14 @@ export default function Dashboard() {
           <Link to="/app/billing">Review your plan</Link>.
         </Notice>
       )}
+      {d.readiness.reasons.map((reason) => (
+        <Notice key={reason}>
+          {reason} <Link to="/app/data-health">Check data health</Link>.
+        </Notice>
+      ))}
+      {d.readiness.warnings.map((reason) => (
+        <Notice key={reason}>{reason}</Notice>
+      ))}
       {!ready && (
         <Notice>
           Your profit overview will appear after synchronization and calculation
@@ -135,7 +145,7 @@ export default function Dashboard() {
         period. <Link to="/app/help">Calculation limitations</Link>.
       </Notice>
       <Card title="Needs attention">
-        {d.leaks.length ? (
+        {ready && d.leaks.length ? (
           <ul>
             {d.leaks.map((l) => (
               <li key={l.id}>

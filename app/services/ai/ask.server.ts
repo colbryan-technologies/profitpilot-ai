@@ -1,7 +1,8 @@
 import { z } from "zod";
 import prisma from "../../db.server";
 import { logger } from "../../lib/logger.server";
-import type { PeriodKey } from "../../lib/dates";
+import { resolvePeriod, type PeriodKey } from "../../lib/dates";
+import { requireReadyReport } from "../report-readiness.server";
 import { buildGrounding, type GroundingPack } from "./grounding.server";
 import {
   AiUnavailableError,
@@ -135,6 +136,14 @@ export async function askProfitPilot(params: {
   const periodKey = periodSchema.safeParse(params.period).success
     ? (params.period as PeriodKey)
     : inferPeriod(question);
+  const reportStore = await prisma.store.findUniqueOrThrow({
+    where: { id: params.storeId },
+    select: { ianaTimezone: true },
+  });
+  await requireReadyReport(
+    params.storeId,
+    resolvePeriod(periodKey, reportStore.ianaTimezone),
+  );
   const grounding = await buildGrounding(params.storeId, periodKey);
 
   const conversation = params.conversationId

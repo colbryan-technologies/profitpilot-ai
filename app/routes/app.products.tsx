@@ -5,12 +5,14 @@ import {
   productMetrics,
   periodSummary,
 } from "../services/profit/reporting.server";
+import { requireReadyReport } from "../services/report-readiness.server";
 import { formatMoney } from "../lib/money";
 import { Page, Card, Notice, PeriodSelect } from "../components/ui";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
   const period = requestPeriod(request, store.ianaTimezone);
+  await requireReadyReport(store.id, period);
   const summary = await periodSummary(store.id, period);
   const products = await productMetrics(store.id, period, {
     adSpendMinor: summary.adSpendMinor,

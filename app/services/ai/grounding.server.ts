@@ -1,4 +1,5 @@
 import { requireReportPeriod, includesPeriod } from "../report-access.server";
+import { reportReadiness } from "../report-readiness.server";
 import prisma from "../../db.server";
 import { CALC_VERSION, type PeriodSummary } from "../../domain/profit/types";
 import { confidenceLabel } from "../../domain/confidence";
@@ -77,7 +78,9 @@ export async function buildGrounding(
   );
   const window = await requireReportPeriod(storeId, cur);
   const prev = previousPeriod(cur);
-  const comparisonAvailable = includesPeriod(window, prev);
+  const comparisonAvailable =
+    includesPeriod(window, prev) &&
+    (await reportReadiness(storeId, prev)).ready;
   const fmt = (m: number) => formatMoney(m, store.currency);
 
   const [
@@ -141,7 +144,7 @@ export async function buildGrounding(
         label,
         {
           current: money(c),
-          previous: "Unavailable under current history allowance",
+          previous: "Unavailable: history or data readiness",
           changePct: null,
         },
       ] as const;
@@ -223,10 +226,10 @@ export async function buildGrounding(
     (a, b) => a.contributionProfitMinor - b.contributionProfitMinor,
   );
 
-  const dataNotes: string[] = [];
+  const dataNotes: string[] = (await reportReadiness(storeId, cur)).warnings;
   if (!comparisonAvailable)
     dataNotes.push(
-      "Previous-period figures are outside your plan history and are unavailable; no comparison was calculated.",
+      "Previous-period figures are outside plan history or not ready; no comparison was calculated.",
     );
   if (missingCogsCount > 0)
     dataNotes.push(
