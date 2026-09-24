@@ -1,4 +1,4 @@
-import Decimal from "decimal.js";
+import { Decimal } from "decimal.js";
 import { daysBetween } from "../../lib/dates";
 import { ratio } from "../../lib/money";
 import type { ExpenseInput, OrderProfit, PeriodSummary } from "./types";
@@ -25,9 +25,15 @@ function round4(n: Decimal): number {
  * Recurring expenses are accrued per day so that arbitrary periods compare
  * consistently; totals are rounded to minor units per period, not per day.
  */
-export function expenseAmountInPeriod(expense: ExpenseInput, start: Date, end: Date): number {
+export function expenseAmountInPeriod(
+  expense: ExpenseInput,
+  start: Date,
+  end: Date,
+): number {
   if (expense.recurrence === "ONE_TIME") {
-    return expense.startsOn >= start && expense.startsOn < end ? expense.amountMinor : 0;
+    return expense.startsOn >= start && expense.startsOn < end
+      ? expense.amountMinor
+      : 0;
   }
   const effStart = expense.startsOn > start ? expense.startsOn : start;
   const hardEnd = expense.endsOn && expense.endsOn < end ? expense.endsOn : end;
@@ -46,7 +52,10 @@ export function expenseAmountInPeriod(expense: ExpenseInput, start: Date, end: D
         return a.div(365.25);
     }
   })();
-  return perDay.mul(days).toDecimalPlaces(0, Decimal.ROUND_HALF_EVEN).toNumber();
+  return perDay
+    .mul(days)
+    .toDecimalPlaces(0, Decimal.ROUND_HALF_EVEN)
+    .toNumber();
 }
 
 export interface AggregateInput {
@@ -60,7 +69,22 @@ export interface AggregateInput {
 
 export function summarizePeriod(input: AggregateInput): PeriodSummary {
   const included = input.orders.filter((o) => !o.isExcluded);
-  const sumOf = (f: (o: OrderProfit) => number) => included.reduce((a, o) => a + f(o), 0);
+  if (
+    included.some(
+      (o) => o.currency.toUpperCase() !== input.currency.toUpperCase(),
+    )
+  ) {
+    throw new Error("Cannot aggregate orders in different currencies");
+  }
+  if (
+    input.expenses.some(
+      (e) => e.currency.toUpperCase() !== input.currency.toUpperCase(),
+    )
+  ) {
+    throw new Error("Cannot aggregate expenses in different currencies");
+  }
+  const sumOf = (f: (o: OrderProfit) => number) =>
+    included.reduce((a, o) => a + f(o), 0);
 
   const grossSales = sumOf((o) => o.grossSalesMinor);
   const discounts = sumOf((o) => o.discountsMinor);
@@ -75,7 +99,11 @@ export function summarizePeriod(input: AggregateInput): PeriodSummary {
   const contributionBeforeAds = sumOf((o) => o.contributionProfitMinor);
   const otherExpenses = input.expenses
     .filter((e) => e.currency.toUpperCase() === input.currency.toUpperCase())
-    .reduce((a, e) => a + expenseAmountInPeriod(e, input.periodStart, input.periodEnd), 0);
+    .reduce(
+      (a, e) =>
+        a + expenseAmountInPeriod(e, input.periodStart, input.periodEnd),
+      0,
+    );
 
   const contribution = contributionBeforeAds - input.adSpendMinor;
   const netProfit = contribution - otherExpenses;
@@ -84,9 +112,21 @@ export function summarizePeriod(input: AggregateInput): PeriodSummary {
   // Break-even ROAS: the ROAS at which contribution profit is zero.
   // contribution = netSales × (contributionBeforeAds / netSales) − adSpend = 0
   // ⇒ adSpend = contributionBeforeAds ⇒ ROAS_be = netSales / contributionBeforeAds.
-  const breakEvenRoas = contributionBeforeAds > 0 ? round4(new Decimal(netSales).div(contributionBeforeAds)) : null;
-  const roas = input.adSpendMinor > 0 ? round4(new Decimal(netSales).div(input.adSpendMinor)) : null;
-  const breakEvenCpa = orderCount > 0 && contributionBeforeAds > 0 ? new Decimal(contributionBeforeAds).div(orderCount).toDecimalPlaces(0, Decimal.ROUND_DOWN).toNumber() : null;
+  const breakEvenRoas =
+    contributionBeforeAds > 0
+      ? round4(new Decimal(netSales).div(contributionBeforeAds))
+      : null;
+  const roas =
+    input.adSpendMinor > 0
+      ? round4(new Decimal(netSales).div(input.adSpendMinor))
+      : null;
+  const breakEvenCpa =
+    orderCount > 0 && contributionBeforeAds > 0
+      ? new Decimal(contributionBeforeAds)
+          .div(orderCount)
+          .toDecimalPlaces(0, Decimal.ROUND_DOWN)
+          .toNumber()
+      : null;
 
   return {
     currency: input.currency.toUpperCase(),
@@ -111,7 +151,8 @@ export function summarizePeriod(input: AggregateInput): PeriodSummary {
     netMarginBps: bps(netProfit, netSales),
     grossMarginBps: bps(grossProfit, netSales),
     contributionMarginBps: bps(contribution, netSales),
-    averageOrderValueMinor: orderCount > 0 ? Math.round(netSales / orderCount) : null,
+    averageOrderValueMinor:
+      orderCount > 0 ? Math.round(netSales / orderCount) : null,
     roas,
     breakEvenRoas,
     breakEvenCpaMinor: breakEvenCpa,
@@ -139,8 +180,14 @@ export interface SnapshotLike {
   netProfitMinor: number;
 }
 
-export function combineSnapshots(currency: string, periodStart: Date, periodEnd: Date, snapshots: SnapshotLike[]): PeriodSummary {
-  const s = (f: (x: SnapshotLike) => number) => snapshots.reduce((a, x) => a + f(x), 0);
+export function combineSnapshots(
+  currency: string,
+  periodStart: Date,
+  periodEnd: Date,
+  snapshots: SnapshotLike[],
+): PeriodSummary {
+  const s = (f: (x: SnapshotLike) => number) =>
+    snapshots.reduce((a, x) => a + f(x), 0);
   const netSales = s((x) => x.netSalesMinor);
   const contribution = s((x) => x.contributionProfitMinor);
   const adSpend = s((x) => x.adSpendMinor);
@@ -174,10 +221,17 @@ export function combineSnapshots(currency: string, periodStart: Date, periodEnd:
     netMarginBps: bps(netProfit, netSales),
     grossMarginBps: bps(grossProfit, netSales),
     contributionMarginBps: bps(contribution, netSales),
-    averageOrderValueMinor: orderCount > 0 ? Math.round(netSales / orderCount) : null,
+    averageOrderValueMinor:
+      orderCount > 0 ? Math.round(netSales / orderCount) : null,
     roas: adSpend > 0 ? round4(new Decimal(netSales).div(adSpend)) : null,
-    breakEvenRoas: contributionBeforeAds > 0 ? round4(new Decimal(netSales).div(contributionBeforeAds)) : null,
-    breakEvenCpaMinor: orderCount > 0 && contributionBeforeAds > 0 ? Math.floor(contributionBeforeAds / orderCount) : null,
+    breakEvenRoas:
+      contributionBeforeAds > 0
+        ? round4(new Decimal(netSales).div(contributionBeforeAds))
+        : null,
+    breakEvenCpaMinor:
+      orderCount > 0 && contributionBeforeAds > 0
+        ? Math.floor(contributionBeforeAds / orderCount)
+        : null,
     refundRateBps: bps(refunds, grossSales - discounts),
     discountRateBps: bps(discounts, grossSales),
   };

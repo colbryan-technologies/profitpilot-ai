@@ -2,7 +2,8 @@
   "name": "app",
   "private": true,
   "scripts": {
-    "build": "react-router build",
+    "build": "react-router build && npm run build:worker",
+    "build:worker": "esbuild worker/index.ts --bundle --platform=node --format=esm --packages=external --outfile=build/worker/index.js",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
@@ -85,6 +86,8 @@
     "@shopify/plugin-cloudflare"
   ],
   "overrides": {
+    "lodash": "^4.18.1",
+    "minimatch@9": "^9.0.9",
     "p-map": "^4.0.0",
     "qs": "^6.16.0"
   },

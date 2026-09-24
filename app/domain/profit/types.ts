@@ -4,9 +4,10 @@
  * exhaustively with fixtures. See docs/methodology/profit-calculation.md.
  */
 
-export const CALC_VERSION = "2026.09.1";
+export const CALC_VERSION = "2026.09.2";
 
-export type TaxTreatment = "EXCLUDE_COLLECTED_TAX" | "INCLUDE_TAX_AS_REVENUE" | "UNCONFIGURED";
+export type TaxTreatment =
+  "EXCLUDE_COLLECTED_TAX" | "INCLUDE_TAX_AS_REVENUE" | "UNCONFIGURED";
 
 export type CogsSourceKind = "HISTORY" | "CURRENT" | "SHOPIFY" | "MISSING";
 
@@ -88,7 +89,10 @@ export interface CogsRecord {
 
 /** Resolves COGS for a variant at a point in time. Implemented over CogsHistory. */
 export interface CogsResolver {
-  resolve(variantId: string | null, at: Date): { unitCostMinor: number; source: CogsSourceKind } | null;
+  resolve(
+    variantId: string | null,
+    at: Date,
+  ): { unitCostMinor: number; source: CogsSourceKind } | null;
 }
 
 export interface FeeConfigInput {

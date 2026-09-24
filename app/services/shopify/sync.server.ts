@@ -27,7 +27,11 @@ export interface SyncProgress {
 
 export type ProgressReporter = (p: SyncProgress) => Promise<void>;
 
-export async function syncShopInfo(storeId: string, shopDomain: string, graphql?: AdminGraphql): Promise<void> {
+export async function syncShopInfo(
+  storeId: string,
+  shopDomain: string,
+  graphql?: AdminGraphql,
+): Promise<void> {
   const gql = graphql ?? (await adminGraphqlForShop(shopDomain));
   const data = await gql<{ shop: unknown }>(SHOP_QUERY);
   const shop = shopSchema.parse(data.shop);
@@ -39,24 +43,51 @@ export async function syncShopInfo(storeId: string, shopDomain: string, graphql?
       email: shop.email,
       currency: shop.currencyCode.toUpperCase(),
       ianaTimezone: shop.ianaTimezone,
-      planName: shop.plan.shopifyPlus ? "plus" : shop.plan.partnerDevelopment ? "development" : null,
+      planName: shop.plan.shopifyPlus
+        ? "plus"
+        : shop.plan.partnerDevelopment
+          ? "development"
+          : null,
     },
   });
   const taxConfig = await prisma.taxConfig.findUnique({ where: { storeId } });
   if (taxConfig && !taxConfig.confirmedAt) {
     // Default assumption from shop settings; the merchant confirms it in Settings → Tax.
-    await prisma.taxConfig.update({ where: { storeId }, data: { notes: shop.taxesIncluded ? "Shop prices include tax (from Shopify settings)." : "Shop prices exclude tax (from Shopify settings)." } });
+    await prisma.taxConfig.update({
+      where: { storeId },
+      data: {
+        notes: shop.taxesIncluded
+          ? "Shop prices include tax (from Shopify settings)."
+          : "Shop prices exclude tax (from Shopify settings).",
+      },
+    });
   }
 }
 
-export async function syncProducts(storeId: string, shopDomain: string, opts: { since?: Date | null; cursor?: string | null; onProgress?: ProgressReporter } = {}): Promise<SyncProgress> {
+export async function syncProducts(
+  storeId: string,
+  shopDomain: string,
+  opts: {
+    since?: Date | null;
+    cursor?: string | null;
+    onProgress?: ProgressReporter;
+  } = {},
+): Promise<SyncProgress> {
   const gql = await adminGraphqlForShop(shopDomain);
-  const store = await prisma.store.findUniqueOrThrow({ where: { id: storeId }, select: { currency: true } });
+  const store = await prisma.store.findUniqueOrThrow({
+    where: { id: storeId },
+    select: { currency: true },
+  });
   let after: string | null = opts.cursor ?? null;
   let processed = 0;
   const query = opts.since ? `updated_at:>'${opts.since.toISOString()}'` : null;
   for (;;) {
-    const data = await gql<{ products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: unknown[] } }>(PRODUCTS_PAGE_QUERY, { first: PAGE, after, query });
+    const data = await gql<{
+      products: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: unknown[];
+      };
+    }>(PRODUCTS_PAGE_QUERY, { first: PAGE, after, query });
     for (const raw of data.products.nodes) {
       await upsertProduct(storeId, mapProduct(raw, store.currency));
       processed++;
@@ -68,24 +99,45 @@ export async function syncProducts(storeId: string, shopDomain: string, opts: { 
   return { processed, total: null, cursor: null };
 }
 
-export async function syncSingleProduct(storeId: string, shopDomain: string, productGid: string): Promise<void> {
+export async function syncSingleProduct(
+  storeId: string,
+  shopDomain: string,
+  productGid: string,
+): Promise<void> {
   const gql = await adminGraphqlForShop(shopDomain);
-  const store = await prisma.store.findUniqueOrThrow({ where: { id: storeId }, select: { currency: true } });
-  const data = await gql<{ product: unknown | null }>(PRODUCT_BY_ID_QUERY, { id: productGid });
-  if (data.product) await upsertProduct(storeId, mapProduct(data.product, store.currency));
+  const store = await prisma.store.findUniqueOrThrow({
+    where: { id: storeId },
+    select: { currency: true },
+  });
+  const data = await gql<{ product: unknown | null }>(PRODUCT_BY_ID_QUERY, {
+    id: productGid,
+  });
+  if (data.product)
+    await upsertProduct(storeId, mapProduct(data.product, store.currency));
 }
 
-export async function syncSingleOrder(storeId: string, shopDomain: string, orderGid: string): Promise<boolean> {
+export async function syncSingleOrder(
+  storeId: string,
+  shopDomain: string,
+  orderGid: string,
+): Promise<boolean> {
   const gql = await adminGraphqlForShop(shopDomain);
-  const data = await gql<{ order: unknown | null }>(ORDER_BY_ID_QUERY, { id: orderGid });
+  const data = await gql<{ order: unknown | null }>(ORDER_BY_ID_QUERY, {
+    id: orderGid,
+  });
   if (!data.order) return false;
   const { changed } = await upsertOrder(storeId, mapOrder(data.order));
   return changed;
 }
 
-export async function countOrders(shopDomain: string, query: string | null): Promise<number | null> {
+export async function countOrders(
+  shopDomain: string,
+  query: string | null,
+): Promise<number | null> {
   const gql = await adminGraphqlForShop(shopDomain);
-  const data = await gql<{ ordersCount: { count: number; precision: string } | null }>(ORDERS_COUNT_QUERY, { query });
+  const data = await gql<{
+    ordersCount: { count: number; precision: string } | null;
+  }>(ORDERS_COUNT_QUERY, { query });
   return data.ordersCount?.count ?? null;
 }
 
@@ -96,20 +148,36 @@ export async function countOrders(shopDomain: string, query: string | null): Pro
 export async function syncOrdersPaginated(
   storeId: string,
   shopDomain: string,
-  opts: { query: string | null; cursor?: string | null; total?: number | null; onProgress?: ProgressReporter; shouldStop?: () => Promise<boolean> },
+  opts: {
+    query: string | null;
+    cursor?: string | null;
+    total?: number | null;
+    onProgress?: ProgressReporter;
+    shouldStop?: () => Promise<boolean>;
+  },
 ): Promise<SyncProgress> {
   const gql = await adminGraphqlForShop(shopDomain);
   let after: string | null = opts.cursor ?? null;
   let processed = 0;
   for (;;) {
-    if (await opts.shouldStop?.()) return { processed, total: opts.total ?? null, cursor: after };
-    const data = await gql<{ orders: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: unknown[] } }>(ORDERS_PAGE_QUERY, { first: PAGE, after, query: opts.query });
+    if (await opts.shouldStop?.())
+      return { processed, total: opts.total ?? null, cursor: after };
+    const data = await gql<{
+      orders: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: unknown[];
+      };
+    }>(ORDERS_PAGE_QUERY, { first: PAGE, after, query: opts.query });
     for (const raw of data.orders.nodes) {
       await upsertOrder(storeId, mapOrder(raw));
       processed++;
     }
     after = data.orders.pageInfo.endCursor;
-    await opts.onProgress?.({ processed, total: opts.total ?? null, cursor: after });
+    await opts.onProgress?.({
+      processed,
+      total: opts.total ?? null,
+      cursor: after,
+    });
     if (!data.orders.pageInfo.hasNextPage) break;
   }
   return { processed, total: opts.total ?? null, cursor: null };
@@ -124,16 +192,41 @@ export async function syncOrdersPaginated(
  * operation is already running for this app on the shop), so the caller can
  * fall back to pagination.
  */
-export async function startBulkOrders(shopDomain: string, query: string | null): Promise<string | null> {
+export async function startBulkOrders(
+  shopDomain: string,
+  query: string | null,
+): Promise<string | null> {
   const gql = await adminGraphqlForShop(shopDomain);
-  const current = await gql<{ currentBulkOperation: { id: string; status: string } | null }>(CURRENT_BULK_QUERY);
-  if (current.currentBulkOperation && ["CREATED", "RUNNING"].includes(current.currentBulkOperation.status)) {
+  const current = await gql<{
+    currentBulkOperation: { id: string; status: string } | null;
+  }>(CURRENT_BULK_QUERY);
+  if (
+    current.currentBulkOperation &&
+    ["CREATED", "RUNNING"].includes(current.currentBulkOperation.status)
+  ) {
     return current.currentBulkOperation.id;
   }
-  const bulkQuery = BULK_ORDERS_QUERY.replace("query ProfitPilotBulkOrders($query: String) {", "{").replace("orders(query: $query)", query ? `orders(query: ${JSON.stringify(query)})` : "orders");
-  const res = await gql<{ bulkOperationRunQuery: { bulkOperation: { id: string; status: string } | null; userErrors: Array<{ message: string }> } }>(BULK_RUN_MUTATION, { query: bulkQuery });
-  if (res.bulkOperationRunQuery.userErrors.length || !res.bulkOperationRunQuery.bulkOperation) {
-    logger.warn({ shopDomain, errors: res.bulkOperationRunQuery.userErrors }, "bulk operation not started");
+  const bulkQuery = BULK_ORDERS_QUERY.replace(
+    "query ProfitPilotBulkOrders($query: String) {",
+    "{",
+  ).replace(
+    "orders(query: $query)",
+    query ? `orders(query: ${JSON.stringify(query)})` : "orders",
+  );
+  const res = await gql<{
+    bulkOperationRunQuery: {
+      bulkOperation: { id: string; status: string } | null;
+      userErrors: Array<{ message: string }>;
+    };
+  }>(BULK_RUN_MUTATION, { query: bulkQuery });
+  if (
+    res.bulkOperationRunQuery.userErrors.length ||
+    !res.bulkOperationRunQuery.bulkOperation
+  ) {
+    logger.warn(
+      { shopDomain, errors: res.bulkOperationRunQuery.userErrors },
+      "bulk operation not started",
+    );
     return null;
   }
   return res.bulkOperationRunQuery.bulkOperation.id;
@@ -148,21 +241,32 @@ export interface BulkStatus {
   partialDataUrl: string | null;
 }
 
-export async function pollBulk(shopDomain: string, id: string): Promise<BulkStatus> {
+export async function pollBulk(
+  shopDomain: string,
+  id: string,
+): Promise<BulkStatus> {
   const gql = await adminGraphqlForShop(shopDomain);
-  const data = await gql<{ node: BulkStatus | null }>(BULK_STATUS_QUERY, { id });
+  const data = await gql<{ node: BulkStatus | null }>(BULK_STATUS_QUERY, {
+    id,
+  });
   if (!data.node) throw new Error("Bulk operation not found");
   return data.node;
 }
 
-export async function waitForBulk(shopDomain: string, id: string, opts: { timeoutMs: number; onTick?: (s: BulkStatus) => Promise<void> }): Promise<BulkStatus> {
+export async function waitForBulk(
+  shopDomain: string,
+  id: string,
+  opts: { timeoutMs: number; onTick?: (s: BulkStatus) => Promise<void> },
+): Promise<BulkStatus> {
   const started = Date.now();
   let delay = 2_000;
   for (;;) {
     const status = await pollBulk(shopDomain, id);
     await opts.onTick?.(status);
-    if (["COMPLETED", "FAILED", "CANCELED", "EXPIRED"].includes(status.status)) return status;
-    if (Date.now() - started > opts.timeoutMs) throw new Error("Bulk operation timed out");
+    if (["COMPLETED", "FAILED", "CANCELED", "EXPIRED"].includes(status.status))
+      return status;
+    if (Date.now() - started > opts.timeoutMs)
+      throw new Error("Bulk operation timed out");
     await sleep(delay);
     delay = Math.min(15_000, Math.round(delay * 1.5));
   }
@@ -176,12 +280,20 @@ type JsonlLine = { id?: string; __parentId?: string } & Record<string, unknown>;
  */
 export async function* iterateBulkOrders(url: string): AsyncGenerator<unknown> {
   const res = await fetch(url);
-  if (!res.ok || !res.body) throw new Error(`Bulk download failed (${res.status})`);
+  if (!res.ok || !res.body)
+    throw new Error(`Bulk download failed (${res.status})`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let current: (JsonlLine & { lineItems: { nodes: JsonlLine[] } }) | null = null;
-  const refundIndex = new Map<string, JsonlLine & { refundLineItems: { nodes: JsonlLine[] }; refundShippingLines: { nodes: JsonlLine[] } }>();
+  let current: (JsonlLine & { lineItems: { nodes: JsonlLine[] } }) | null =
+    null;
+  const refundIndex = new Map<
+    string,
+    JsonlLine & {
+      refundLineItems: { nodes: JsonlLine[] };
+      refundShippingLines: { nodes: JsonlLine[] };
+    }
+  >();
 
   const flush = () => {
     const done = current;
@@ -196,28 +308,48 @@ export async function* iterateBulkOrders(url: string): AsyncGenerator<unknown> {
       const prev = flush();
       // `refunds` and `transactions` are list fields (not connections) and arrive inline;
       // connection children (line items, refund lines) arrive as separate lines.
-      const refunds = ((line.refunds as JsonlLine[] | undefined) ?? []).map((r) => {
-        const refund = {
-          ...r,
-          refundLineItems: (r.refundLineItems as { nodes: JsonlLine[] } | undefined) ?? { nodes: [] },
-          refundShippingLines: (r.refundShippingLines as { nodes: JsonlLine[] } | undefined) ?? { nodes: [] },
-        };
-        if (r.id) refundIndex.set(r.id, refund);
-        return refund;
-      });
-      current = { ...line, lineItems: { nodes: [] }, refunds, transactions: line.transactions ?? [] } as typeof current;
+      const refunds = ((line.refunds as JsonlLine[] | undefined) ?? []).map(
+        (r) => {
+          const refund = {
+            ...r,
+            refundLineItems: (r.refundLineItems as
+              { nodes: JsonlLine[] } | undefined) ?? { nodes: [] },
+            refundShippingLines: (r.refundShippingLines as
+              { nodes: JsonlLine[] } | undefined) ?? { nodes: [] },
+          };
+          if (r.id) refundIndex.set(r.id, refund);
+          return refund;
+        },
+      );
+      current = {
+        ...line,
+        lineItems: { nodes: [] },
+        refunds,
+        transactions: line.transactions ?? [],
+      } as typeof current;
       return prev ?? undefined;
     }
     if (!current) return undefined;
     if (id.startsWith("gid://shopify/LineItem/")) {
       current.lineItems.nodes.push(line);
     } else if (id.startsWith("gid://shopify/Refund/")) {
-      const refund = { ...line, refundLineItems: { nodes: [] as JsonlLine[] }, refundShippingLines: { nodes: [] as JsonlLine[] } };
+      const refund = {
+        ...line,
+        refundLineItems: { nodes: [] as JsonlLine[] },
+        refundShippingLines: { nodes: [] as JsonlLine[] },
+      };
       refundIndex.set(id, refund);
       (current.refunds as unknown[]).push(refund);
-    } else if (id.startsWith("gid://shopify/RefundLineItem/") || (line.__parentId?.startsWith("gid://shopify/Refund/") && "restockType" in line)) {
+    } else if (
+      id.startsWith("gid://shopify/RefundLineItem/") ||
+      (line.__parentId?.startsWith("gid://shopify/Refund/") &&
+        "restockType" in line)
+    ) {
       refundIndex.get(line.__parentId ?? "")?.refundLineItems.nodes.push(line);
-    } else if (line.__parentId?.startsWith("gid://shopify/Refund/") && "subtotalAmountSet" in line) {
+    } else if (
+      line.__parentId?.startsWith("gid://shopify/Refund/") &&
+      "subtotalAmountSet" in line
+    ) {
       refundIndex.get(line.__parentId)?.refundShippingLines.nodes.push(line);
     }
     return undefined;
@@ -244,18 +376,39 @@ export async function* iterateBulkOrders(url: string): AsyncGenerator<unknown> {
   if (last) yield last;
 }
 
-export async function ingestBulkOrders(storeId: string, url: string, opts: { onProgress?: ProgressReporter; total?: number | null } = {}): Promise<number> {
+export async function ingestBulkOrders(
+  storeId: string,
+  url: string,
+  opts: { onProgress?: ProgressReporter; total?: number | null } = {},
+): Promise<number> {
   let processed = 0;
   for await (const raw of iterateBulkOrders(url)) {
     try {
       await upsertOrder(storeId, mapOrder(raw));
     } catch (err) {
-      logger.error({ storeId, err: (err as Error).message, orderId: (raw as { id?: string }).id }, "failed to ingest bulk order");
+      logger.error(
+        {
+          storeId,
+          err: (err as Error).message,
+          orderId: (raw as { id?: string }).id,
+        },
+        "failed to ingest bulk order",
+      );
+      throw err; // A partial import must never become a successful sync.
     }
     processed++;
-    if (processed % 100 === 0) await opts.onProgress?.({ processed, total: opts.total ?? null, cursor: null });
+    if (processed % 100 === 0)
+      await opts.onProgress?.({
+        processed,
+        total: opts.total ?? null,
+        cursor: null,
+      });
   }
-  await opts.onProgress?.({ processed, total: opts.total ?? null, cursor: null });
+  await opts.onProgress?.({
+    processed,
+    total: opts.total ?? null,
+    cursor: null,
+  });
   return processed;
 }
 

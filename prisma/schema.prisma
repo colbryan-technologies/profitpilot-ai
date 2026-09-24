@@ -107,6 +107,7 @@ model Store {
   status         StoreStatus @default(ACTIVE)
   onboardingStep String   @default("welcome")
   onboardingCompletedAt DateTime?
+  aiEnabled      Boolean   @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

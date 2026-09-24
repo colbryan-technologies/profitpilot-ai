@@ -7,7 +7,7 @@
  * exactly. Divisions (allocations, fee percentages) use banker's-safe integer
  * math with explicit rounding, and allocations always sum to the original total.
  */
-import Decimal from "decimal.js";
+import { Decimal } from "decimal.js";
 
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_EVEN });
 
@@ -58,9 +58,13 @@ export function assertInteger(n: number, label = "amount"): void {
 }
 
 /** Parse a decimal string like "12.34" into minor units for the currency. */
-export function toMinor(decimalString: string | number, currency: CurrencyCode): number {
+export function toMinor(
+  decimalString: string | number,
+  currency: CurrencyCode,
+): number {
   const d = new Decimal(decimalString);
-  if (!d.isFinite()) throw new TypeError(`Invalid money value: ${decimalString}`);
+  if (!d.isFinite())
+    throw new TypeError(`Invalid money value: ${decimalString}`);
   const scaled = d.mul(new Decimal(10).pow(minorUnitExponent(currency)));
   const rounded = scaled.toDecimalPlaces(0, Decimal.ROUND_HALF_EVEN);
   const n = rounded.toNumber();
@@ -109,7 +113,9 @@ export function negate(a: Money): Money {
 }
 
 export function multiply(a: Money, factor: number): Money {
-  const result = new Decimal(a.amount).mul(factor).toDecimalPlaces(0, Decimal.ROUND_HALF_EVEN);
+  const result = new Decimal(a.amount)
+    .mul(factor)
+    .toDecimalPlaces(0, Decimal.ROUND_HALF_EVEN);
   return money(result.toNumber(), a.currency);
 }
 
@@ -120,7 +126,11 @@ export function multiply(a: Money, factor: number): Money {
 export function percentBps(minor: number, bps: number): number {
   assertInteger(minor);
   assertInteger(bps, "bps");
-  return new Decimal(minor).mul(bps).div(10_000).toDecimalPlaces(0, Decimal.ROUND_HALF_EVEN).toNumber();
+  return new Decimal(minor)
+    .mul(bps)
+    .div(10_000)
+    .toDecimalPlaces(0, Decimal.ROUND_HALF_EVEN)
+    .toNumber();
 }
 
 /**
@@ -160,20 +170,37 @@ export function ratio(numerator: number, denominator: number): number | null {
 }
 
 /** Percentage (0-100) with 1 decimal; null when denominator is 0. */
-export function percentage(numerator: number, denominator: number): number | null {
+export function percentage(
+  numerator: number,
+  denominator: number,
+): number | null {
   const r = ratio(numerator, denominator);
-  return r === null ? null : new Decimal(r).mul(100).toDecimalPlaces(1).toNumber();
+  return r === null
+    ? null
+    : new Decimal(r).mul(100).toDecimalPlaces(1).toNumber();
 }
 
 /** Percentage change from `previous` to `current`. */
-export function percentChange(current: number, previous: number): number | null {
+export function percentChange(
+  current: number,
+  previous: number,
+): number | null {
   if (previous === 0) return current === 0 ? 0 : null;
-  return new Decimal(current - previous).div(Math.abs(previous)).mul(100).toDecimalPlaces(1).toNumber();
+  return new Decimal(current - previous)
+    .div(Math.abs(previous))
+    .mul(100)
+    .toDecimalPlaces(1)
+    .toNumber();
 }
 
 const formatterCache = new Map<string, Intl.NumberFormat>();
 
-export function formatMoney(minor: number, currency: CurrencyCode, locale = "en", opts?: { compact?: boolean }): string {
+export function formatMoney(
+  minor: number,
+  currency: CurrencyCode,
+  locale = "en",
+  opts?: { compact?: boolean },
+): string {
   const key = `${locale}|${currency}|${opts?.compact ? "c" : "f"}`;
   let fmt = formatterCache.get(key);
   if (!fmt) {
