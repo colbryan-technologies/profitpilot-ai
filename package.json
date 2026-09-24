@@ -37,7 +37,7 @@
     "@react-router/node": "7.18.2",
     "@react-router/serve": "7.18.2",
     "@shopify/app-bridge-react": "^4.2.4",
-    "@shopify/shopify-app-react-router": "^1.1.0",
+    "@shopify/shopify-app-react-router": "^2.0.0",
     "@shopify/shopify-app-session-storage-prisma": "^9.0.0",
     "bullmq": "^6.3.8",
     "decimal.js": "^10.6.0",
