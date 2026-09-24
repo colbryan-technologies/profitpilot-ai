@@ -1,10 +1,11 @@
+import { requireReportPeriod } from "../report-access.server";
 import { consumeRateLimit } from "../rate-limit.server";
 import { requirePlanFeature } from "../billing.server";
 import { requireReadyReport } from "../report-readiness.server";
 import { savedBriefingState } from "../saved-reports.server";
 import prisma from "../../db.server";
 import { logger } from "../../lib/logger.server";
-import { previousPeriod, resolvePeriod } from "../../lib/dates";
+import { addDays, toYmd, previousPeriod, resolvePeriod } from "../../lib/dates";
 import { buildGrounding, type GroundingPack } from "./grounding.server";
 import {
   AiUnavailableError,
@@ -45,13 +46,40 @@ export function deterministicDigest(g: GroundingPack): string {
 
 export async function generateWeeklyDigest(
   storeId: string,
+  digestId?: string,
 ): Promise<{ id: string; summary: string }> {
   await requirePlanFeature(storeId, "digest");
   const store = await prisma.store.findUniqueOrThrow({
     where: { id: storeId },
     select: { ianaTimezone: true, aiEnabled: true },
   });
-  const period = resolvePeriod("7d", store.ianaTimezone);
+  const archived =
+    digestId === undefined
+      ? null
+      : await prisma.intelligenceDigest.findFirst({
+          where: { id: digestId, storeId, kind: "WEEKLY" },
+        });
+  if (digestId !== undefined && !archived)
+    throw new Response("Briefing not found.", { status: 404 });
+  const period = archived
+    ? {
+        key: "custom" as const,
+        start: archived.periodStart,
+        end: archived.periodEnd,
+        label: "Saved week",
+      }
+    : resolvePeriod("7d", store.ianaTimezone);
+  if (
+    period.end.getTime() - period.start.getTime() !== 7 * 86_400_000 ||
+    period.start.getUTCHours() !== 0 ||
+    period.start.getUTCMinutes() !== 0 ||
+    period.start.getUTCSeconds() !== 0 ||
+    period.start.getUTCMilliseconds() !== 0
+  )
+    throw new Response("This saved briefing has an unsupported date range.", {
+      status: 400,
+    });
+  await requireReportPeriod(storeId, period);
   await requireReadyReport(storeId, period);
   const existing = await prisma.intelligenceDigest.findUnique({
     where: {
@@ -67,7 +95,10 @@ export async function generateWeeklyDigest(
   await consumeRateLimit(storeId, "briefing", 1, 5 * 60_000);
   const generatedAt = new Date();
 
-  const grounding = await buildGrounding(storeId, "7d");
+  const grounding = await buildGrounding(storeId, "custom", {
+    start: toYmd(period.start),
+    end: toYmd(addDays(period.end, -1)),
+  });
   const { allowedNumbers: _omit, ...data } = grounding;
   void _omit;
   let summary: string;
@@ -78,7 +109,7 @@ export async function generateWeeklyDigest(
       [
         { role: "system", content: DIGEST_PROMPT },
         { role: "system", content: `DATA:\n${JSON.stringify(data)}` },
-        { role: "user", content: "Write this week's briefing." },
+        { role: "user", content: "Write the briefing for the period in DATA." },
       ],
       { tier: "strong", maxOutputTokens: 350 },
     );

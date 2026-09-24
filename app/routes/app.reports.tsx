@@ -52,10 +52,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 export async function action({ request }: ActionFunctionArgs) {
   const { store } = await tenant(request);
-  await formData(request);
+  const form = await formData(request);
   return formResult(async () => {
-    await generateWeeklyDigest(store.id);
-    return "This week's briefing is ready.";
+    const digestId = form.digestId;
+    if (digestId !== undefined && (!digestId.trim() || digestId.length > 200))
+      throw new Response("Invalid briefing selection.", { status: 400 });
+    await generateWeeklyDigest(store.id, digestId);
+    return digestId
+      ? "The selected briefing is ready."
+      : "This week's briefing is ready.";
   });
 }
 export default function Reports() {
@@ -87,6 +92,12 @@ export default function Reports() {
             <p>
               {r.reason} <Link to="/app/data-health">Data health</Link>.
             </p>
+          )}
+          {!r.summary && (
+            <Form method="post">
+              <input type="hidden" name="digestId" value={r.id} />
+              <Submit>Refresh this briefing</Submit>
+            </Form>
           )}
           <p>Generated {new Date(r.createdAt).toLocaleString()}.</p>
           {r.warnings.map((w) => (
