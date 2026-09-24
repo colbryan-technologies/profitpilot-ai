@@ -52,8 +52,9 @@ export default function Help() {
             fixtures.
           </li>
           <li>
-            Large orders or catalogs can exceed the current nested
-            synchronization limits; do not rely on this build for those stores.
+            Large orders and catalogs are paged completely. Imports stop on
+            incomplete responses or records changed during paging; check Data
+            health and retry failed synchronization before relying on totals.
           </li>
         </ul>
       </Card>

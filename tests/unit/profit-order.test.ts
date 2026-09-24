@@ -4,9 +4,40 @@ import { HistoryCogsResolver, NO_COGS } from "../../app/domain/profit/cogs";
 import { D, ctx, line, order } from "../fixtures/orders";
 
 describe("computeOrderProfit", () => {
+  it.each([
+    [false, "EXCLUDE_COLLECTED_TAX", 250],
+    [false, "INCLUDE_TAX_AS_REVENUE", 308],
+    [true, "EXCLUDE_COLLECTED_TAX", 250],
+    [true, "INCLUDE_TAX_AS_REVENUE", 308],
+  ] as const)(
+    "subtracts refunded shipping tax exactly once (inclusive=%s, %s)",
+    (taxesIncluded, taxTreatment, expected) => {
+      const o = order({
+        taxesIncluded,
+        totalShippingMinor: taxesIncluded ? 615 : 500,
+        totalTaxMinor: 115,
+        refunds: [
+          {
+            id: "shipping-refund",
+            processedAt: D("2026-05-15T00:00:00Z"),
+            totalRefundedMinor: 307,
+            shippingRefundMinor: 250,
+            taxRefundMinor: 57,
+            lineItems: [],
+          },
+        ],
+      });
+      const r = computeOrderProfit(o, ctx({ taxTreatment }));
+      expect(r.shippingRevenueMinor).toBe(expected);
+      expect(r.taxCollectedMinor).toBe(58);
+    },
+  );
+
   it("includes collected tax once for tax-exclusive include-tax reporting", () => {
     const o = order({
-      lineItems: [line({ id: "l1", quantity: 1, unitPriceMinor: 10000, taxMinor: 2300 })],
+      lineItems: [
+        line({ id: "l1", quantity: 1, unitPriceMinor: 10000, taxMinor: 2300 }),
+      ],
       totalTaxMinor: 2415,
       totalShippingMinor: 500,
     });
@@ -24,7 +55,12 @@ describe("computeOrderProfit", () => {
       const o = order({
         taxesIncluded: true,
         lineItems: [
-          line({ id: "l1", quantity: 1, unitPriceMinor: 12300, taxMinor: 2300 }),
+          line({
+            id: "l1",
+            quantity: 1,
+            unitPriceMinor: 12300,
+            taxMinor: 2300,
+          }),
         ],
         totalTaxMinor: 2300,
         refunds: [

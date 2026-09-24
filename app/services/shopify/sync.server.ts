@@ -3,6 +3,7 @@ import { logger } from "../../lib/logger.server";
 import { adminGraphqlForShop, type AdminGraphql } from "./admin.server";
 import { mapOrder, mapProduct, shopSchema } from "./mappers";
 import { upsertOrder, upsertProduct } from "./persist.server";
+import { completeOrder, completeProduct } from "./pagination";
 import {
   BULK_ORDERS_QUERY,
   BULK_RUN_MUTATION,
@@ -89,7 +90,17 @@ export async function syncProducts(
       };
     }>(PRODUCTS_PAGE_QUERY, { first: PAGE, after, query });
     for (const raw of data.products.nodes) {
-      await upsertProduct(storeId, mapProduct(raw, store.currency));
+      const id = (raw as { id: string }).id;
+      const detail = await gql<{ product: unknown | null }>(
+        PRODUCT_BY_ID_QUERY,
+        { id },
+      );
+      if (!detail.product)
+        throw new Error("Product no longer accessible; retry synchronization");
+      await upsertProduct(
+        storeId,
+        mapProduct(await completeProduct(detail.product, gql), store.currency),
+      );
       processed++;
     }
     after = data.products.pageInfo.endCursor;
@@ -113,7 +124,10 @@ export async function syncSingleProduct(
     id: productGid,
   });
   if (data.product)
-    await upsertProduct(storeId, mapProduct(data.product, store.currency));
+    await upsertProduct(
+      storeId,
+      mapProduct(await completeProduct(data.product, gql), store.currency),
+    );
 }
 
 export async function syncSingleOrder(
@@ -126,7 +140,10 @@ export async function syncSingleOrder(
     id: orderGid,
   });
   if (!data.order) return false;
-  const { changed } = await upsertOrder(storeId, mapOrder(data.order));
+  const { changed } = await upsertOrder(
+    storeId,
+    mapOrder(await completeOrder(data.order, gql)),
+  );
   return changed;
 }
 
@@ -169,7 +186,16 @@ export async function syncOrdersPaginated(
       };
     }>(ORDERS_PAGE_QUERY, { first: PAGE, after, query: opts.query });
     for (const raw of data.orders.nodes) {
-      await upsertOrder(storeId, mapOrder(raw));
+      const id = (raw as { id: string }).id;
+      const detail = await gql<{ order: unknown | null }>(ORDER_BY_ID_QUERY, {
+        id,
+      });
+      if (!detail.order)
+        throw new Error("Order no longer accessible; retry synchronization");
+      await upsertOrder(
+        storeId,
+        mapOrder(await completeOrder(detail.order, gql)),
+      );
       processed++;
     }
     after = data.orders.pageInfo.endCursor;
@@ -204,7 +230,7 @@ export async function startBulkOrders(
     current.currentBulkOperation &&
     ["CREATED", "RUNNING"].includes(current.currentBulkOperation.status)
   ) {
-    return current.currentBulkOperation.id;
+    return null; // An unrelated operation is not proof of this job's requested dataset.
   }
   const bulkQuery = BULK_ORDERS_QUERY.replace(
     "query ProfitPilotBulkOrders($query: String) {",
@@ -272,119 +298,72 @@ export async function waitForBulk(
   }
 }
 
-type JsonlLine = { id?: string; __parentId?: string } & Record<string, unknown>;
-
-/**
- * Stream the JSONL result and rebuild the nested order shape expected by `mapOrder`.
- * Bulk JSONL emits each connection node as its own line right after its parent.
- */
-export async function* iterateBulkOrders(url: string): AsyncGenerator<unknown> {
+/** Stream the identity-only bulk export; unexpected shapes fail instead of disappearing. */
+export async function* iterateBulkOrders(
+  url: string,
+): AsyncGenerator<{ id: string }> {
   const res = await fetch(url);
   if (!res.ok || !res.body)
     throw new Error(`Bulk download failed (${res.status})`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let current: (JsonlLine & { lineItems: { nodes: JsonlLine[] } }) | null =
-    null;
-  const refundIndex = new Map<
-    string,
-    JsonlLine & {
-      refundLineItems: { nodes: JsonlLine[] };
-      refundShippingLines: { nodes: JsonlLine[] };
-    }
-  >();
-
-  const flush = () => {
-    const done = current;
-    current = null;
-    refundIndex.clear();
-    return done;
-  };
-
-  const handle = (line: JsonlLine): unknown | undefined => {
-    const id = line.id ?? "";
-    if (id.startsWith("gid://shopify/Order/") && !line.__parentId) {
-      const prev = flush();
-      // `refunds` and `transactions` are list fields (not connections) and arrive inline;
-      // connection children (line items, refund lines) arrive as separate lines.
-      const refunds = ((line.refunds as JsonlLine[] | undefined) ?? []).map(
-        (r) => {
-          const refund = {
-            ...r,
-            refundLineItems: (r.refundLineItems as
-              { nodes: JsonlLine[] } | undefined) ?? { nodes: [] },
-            refundShippingLines: (r.refundShippingLines as
-              { nodes: JsonlLine[] } | undefined) ?? { nodes: [] },
-          };
-          if (r.id) refundIndex.set(r.id, refund);
-          return refund;
-        },
-      );
-      current = {
-        ...line,
-        lineItems: { nodes: [] },
-        refunds,
-        transactions: line.transactions ?? [],
-      } as typeof current;
-      return prev ?? undefined;
-    }
-    if (!current) return undefined;
-    if (id.startsWith("gid://shopify/LineItem/")) {
-      current.lineItems.nodes.push(line);
-    } else if (id.startsWith("gid://shopify/Refund/")) {
-      const refund = {
-        ...line,
-        refundLineItems: { nodes: [] as JsonlLine[] },
-        refundShippingLines: { nodes: [] as JsonlLine[] },
-      };
-      refundIndex.set(id, refund);
-      (current.refunds as unknown[]).push(refund);
-    } else if (
-      id.startsWith("gid://shopify/RefundLineItem/") ||
-      (line.__parentId?.startsWith("gid://shopify/Refund/") &&
-        "restockType" in line)
+  const parse = (text: string) => {
+    const value = JSON.parse(text) as { id?: unknown; __parentId?: unknown };
+    if (
+      typeof value.id !== "string" ||
+      !value.id.startsWith("gid://shopify/Order/") ||
+      value.__parentId
     ) {
-      refundIndex.get(line.__parentId ?? "")?.refundLineItems.nodes.push(line);
-    } else if (
-      line.__parentId?.startsWith("gid://shopify/Refund/") &&
-      "subtotalAmountSet" in line
-    ) {
-      refundIndex.get(line.__parentId)?.refundShippingLines.nodes.push(line);
+      throw new Error("Unexpected record in bulk order identity export");
     }
-    return undefined;
+    return { id: value.id };
   };
-
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buffer.indexOf("\n")) >= 0) {
-      const raw = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!raw) continue;
-      const out = handle(JSON.parse(raw) as JsonlLine);
-      if (out) yield out;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const raw = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (raw) yield parse(raw);
+      }
+      if (buffer.length > 1_000_000)
+        throw new Error("Bulk identity record exceeds size limit");
     }
+    buffer += decoder.decode();
+    if (buffer.trim()) yield parse(buffer.trim());
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
   }
-  if (buffer.trim()) {
-    const out = handle(JSON.parse(buffer.trim()) as JsonlLine);
-    if (out) yield out;
-  }
-  const last = flush();
-  if (last) yield last;
 }
-
 export async function ingestBulkOrders(
   storeId: string,
+  shopDomain: string,
   url: string,
   opts: { onProgress?: ProgressReporter; total?: number | null } = {},
 ): Promise<number> {
+  const gql = await adminGraphqlForShop(shopDomain);
   let processed = 0;
   for await (const raw of iterateBulkOrders(url)) {
     try {
-      await upsertOrder(storeId, mapOrder(raw));
+      const id = (raw as { id?: string }).id;
+      if (!id?.startsWith("gid://shopify/Order/"))
+        throw new Error("Invalid bulk order identity");
+      const data = await gql<{ order: unknown | null }>(ORDER_BY_ID_QUERY, {
+        id,
+      });
+      if (!data.order)
+        throw new Error(
+          "Bulk order no longer accessible; retry synchronization",
+        );
+      await upsertOrder(
+        storeId,
+        mapOrder(await completeOrder(data.order, gql)),
+      );
     } catch (err) {
       logger.error(
         {

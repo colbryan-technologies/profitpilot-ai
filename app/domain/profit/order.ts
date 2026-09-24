@@ -224,16 +224,18 @@ export function computeOrderProfit(
   const cogs = lines.reduce((a, l) => a + l.cogsMinor, 0);
   const grossProfit = netSales - cogs;
 
+  const lineTaxRefund = [...refundedByLine.values()].reduce(
+    (sum, line) => sum + line.tax,
+    0,
+  );
+  const shippingTaxRefund = Math.max(0, taxRefundTotal - lineTaxRefund);
   const shippingRevenue =
     order.totalShippingMinor -
+    (order.taxesIncluded ? shippingTax : 0) -
     shippingRefund +
-    (order.taxesIncluded
-      ? ctx.taxTreatment !== "INCLUDE_TAX_AS_REVENUE"
-        ? -shippingTax
-        : 0
-      : ctx.taxTreatment === "INCLUDE_TAX_AS_REVENUE"
-        ? shippingTax
-        : 0);
+    (ctx.taxTreatment === "INCLUDE_TAX_AS_REVENUE"
+      ? shippingTax - shippingTaxRefund
+      : 0);
   const shipping = estimateShippingCost(
     order,
     ctx,

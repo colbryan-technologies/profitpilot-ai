@@ -4,7 +4,7 @@
  * exhaustively with fixtures. See docs/methodology/profit-calculation.md.
  */
 
-export const CALC_VERSION = "2026.09.2";
+export const CALC_VERSION = "2026.09.3";
 
 export type TaxTreatment =
   "EXCLUDE_COLLECTED_TAX" | "INCLUDE_TAX_AS_REVENUE" | "UNCONFIGURED";

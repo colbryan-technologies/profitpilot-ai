@@ -3,6 +3,10 @@ import { toMinor } from "../../lib/money";
 
 const money = z.object({ amount: z.string(), currencyCode: z.string() });
 const moneyBag = z.object({ shopMoney: money });
+const completePage = z.object({
+  hasNextPage: z.literal(false),
+  endCursor: z.string().nullable(),
+});
 
 const lineItemSchema = z.object({
   id: z.string(),
@@ -24,6 +28,7 @@ const refundSchema = z.object({
   createdAt: z.string(),
   totalRefundedSet: moneyBag,
   refundLineItems: z.object({
+    pageInfo: completePage,
     nodes: z.array(
       z.object({
         quantity: z.number().int(),
@@ -34,7 +39,12 @@ const refundSchema = z.object({
       }),
     ),
   }),
-  refundShippingLines: z.object({ nodes: z.array(z.object({ subtotalAmountSet: moneyBag })) }),
+  refundShippingLines: z.object({
+    pageInfo: completePage,
+    nodes: z.array(
+      z.object({ subtotalAmountSet: moneyBag, taxAmountSet: moneyBag }),
+    ),
+  }),
 });
 
 const transactionSchema = z.object({
@@ -63,7 +73,9 @@ export const orderSchema = z.object({
   displayFulfillmentStatus: z.string().nullable(),
   sourceName: z.string().nullable(),
   customer: z.object({ id: z.string() }).nullable(),
-  shippingAddress: z.object({ countryCodeV2: z.string().nullable() }).nullable(),
+  shippingAddress: z
+    .object({ countryCodeV2: z.string().nullable() })
+    .nullable(),
   subtotalPriceSet: moneyBag,
   totalDiscountsSet: moneyBag,
   totalShippingPriceSet: moneyBag,
@@ -72,7 +84,10 @@ export const orderSchema = z.object({
   totalPriceSet: moneyBag,
   totalRefundedSet: moneyBag,
   currentTotalDutiesSet: moneyBag.nullable(),
-  lineItems: z.object({ nodes: z.array(lineItemSchema) }),
+  lineItems: z.object({
+    pageInfo: completePage,
+    nodes: z.array(lineItemSchema),
+  }),
   refunds: z.array(refundSchema),
   transactions: z.array(transactionSchema),
 });
@@ -86,8 +101,15 @@ export const productSchema = z.object({
   vendor: z.string().nullable(),
   productType: z.string().nullable(),
   updatedAt: z.string(),
-  featuredMedia: z.object({ preview: z.object({ image: z.object({ url: z.string() }).nullable() }).nullable() }).nullable(),
+  featuredMedia: z
+    .object({
+      preview: z
+        .object({ image: z.object({ url: z.string() }).nullable() })
+        .nullable(),
+    })
+    .nullable(),
   variants: z.object({
+    pageInfo: completePage,
     nodes: z.array(
       z.object({
         id: z.string(),
@@ -97,7 +119,9 @@ export const productSchema = z.object({
         price: z.string(),
         compareAtPrice: z.string().nullable(),
         updatedAt: z.string(),
-        inventoryItem: z.object({ id: z.string(), unitCost: money.nullable() }).nullable(),
+        inventoryItem: z
+          .object({ id: z.string(), unitCost: money.nullable() })
+          .nullable(),
       }),
     ),
   }),
@@ -117,7 +141,11 @@ export const shopSchema = z.object({
 });
 export type ShopifyShop = z.infer<typeof shopSchema>;
 
-function m(bag: { shopMoney: { amount: string; currencyCode: string } } | null | undefined, currency: string): number {
+function m(
+  bag:
+    { shopMoney: { amount: string; currencyCode: string } } | null | undefined,
+  currency: string,
+): number {
   if (!bag) return 0;
   return toMinor(bag.shopMoney.amount, bag.shopMoney.currencyCode || currency);
 }
@@ -170,7 +198,13 @@ export interface MappedOrder {
     totalRefundedMinor: number;
     shippingRefundMinor: number;
     taxRefundMinor: number;
-    lineItemsJson: Array<{ lineItemShopifyId: string; quantity: number; subtotalMinor: number; taxMinor: number; restockType: string }>;
+    lineItemsJson: Array<{
+      lineItemShopifyId: string;
+      quantity: number;
+      subtotalMinor: number;
+      taxMinor: number;
+      restockType: string;
+    }>;
   }>;
   transactions: Array<{
     shopifyId: string;
@@ -219,14 +253,27 @@ export function mapOrder(raw: unknown): MappedOrder {
       processedAt: new Date(r.createdAt),
       currency,
       totalRefundedMinor: m(r.totalRefundedSet, currency),
-      shippingRefundMinor: r.refundShippingLines.nodes.reduce((a, s) => a + m(s.subtotalAmountSet, currency), 0),
-      taxRefundMinor: lines.reduce((a, l) => a + l.taxMinor, 0),
+      shippingRefundMinor: r.refundShippingLines.nodes.reduce(
+        (a, s) => a + m(s.subtotalAmountSet, currency),
+        0,
+      ),
+      taxRefundMinor:
+        lines.reduce((a, l) => a + l.taxMinor, 0) +
+        r.refundShippingLines.nodes.reduce(
+          (a, s) => a + m(s.taxAmountSet, currency),
+          0,
+        ),
       lineItemsJson: lines,
     };
   });
 
   const transactions = o.transactions.map((t) => {
-    const fee = t.fees.length ? t.fees.reduce((a, f) => a + toMinor(f.amount.amount, f.amount.currencyCode), 0) : null;
+    const fee = t.fees.length
+      ? t.fees.reduce(
+          (a, f) => a + toMinor(f.amount.amount, f.amount.currencyCode),
+          0,
+        )
+      : null;
     return {
       shopifyId: t.id,
       kind: t.kind,
@@ -257,7 +304,10 @@ export function mapOrder(raw: unknown): MappedOrder {
       customerShopifyId: o.customer?.id ?? null,
       isTest: o.test,
       sourceName: o.sourceName,
-      subtotalMinor: lineItems.reduce((a, l) => a + l.unitPriceMinor * l.quantity, 0),
+      subtotalMinor: lineItems.reduce(
+        (a, l) => a + l.unitPriceMinor * l.quantity,
+        0,
+      ),
       totalDiscountsMinor: m(o.totalDiscountsSet, currency),
       totalShippingMinor: m(o.totalShippingPriceSet, currency),
       totalTaxMinor: m(o.totalTaxSet, currency),
@@ -275,8 +325,26 @@ export function mapOrder(raw: unknown): MappedOrder {
 }
 
 export interface MappedProduct {
-  product: { shopifyId: string; title: string; handle: string | null; vendor: string | null; productType: string | null; status: string; imageUrl: string | null; shopifyUpdatedAt: Date };
-  variants: Array<{ shopifyId: string; title: string | null; sku: string | null; barcode: string | null; priceMinor: number; inventoryItemId: string | null; shopifyUnitCostMinor: number | null; shopifyUnitCostCurrency: string | null }>;
+  product: {
+    shopifyId: string;
+    title: string;
+    handle: string | null;
+    vendor: string | null;
+    productType: string | null;
+    status: string;
+    imageUrl: string | null;
+    shopifyUpdatedAt: Date;
+  };
+  variants: Array<{
+    shopifyId: string;
+    title: string | null;
+    sku: string | null;
+    barcode: string | null;
+    priceMinor: number;
+    inventoryItemId: string | null;
+    shopifyUnitCostMinor: number | null;
+    shopifyUnitCostCurrency: string | null;
+  }>;
 }
 
 export function mapProduct(raw: unknown, storeCurrency: string): MappedProduct {
@@ -299,14 +367,22 @@ export function mapProduct(raw: unknown, storeCurrency: string): MappedProduct {
       barcode: v.barcode,
       priceMinor: toMinor(v.price, storeCurrency),
       inventoryItemId: v.inventoryItem?.id ?? null,
-      shopifyUnitCostMinor: v.inventoryItem?.unitCost ? toMinor(v.inventoryItem.unitCost.amount, v.inventoryItem.unitCost.currencyCode) : null,
+      shopifyUnitCostMinor: v.inventoryItem?.unitCost
+        ? toMinor(
+            v.inventoryItem.unitCost.amount,
+            v.inventoryItem.unitCost.currencyCode,
+          )
+        : null,
       shopifyUnitCostCurrency: v.inventoryItem?.unitCost?.currencyCode ?? null,
     })),
   };
 }
 
 /** Convert a REST-shaped webhook payload id (numeric) into a GraphQL gid. */
-export function gid(resource: "Order" | "Product" | "ProductVariant" | "Refund" | "Customer", id: number | string): string {
+export function gid(
+  resource: "Order" | "Product" | "ProductVariant" | "Refund" | "Customer",
+  id: number | string,
+): string {
   const s = String(id);
   return s.startsWith("gid://") ? s : `gid://shopify/${resource}/${s}`;
 }

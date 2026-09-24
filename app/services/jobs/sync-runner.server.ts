@@ -220,7 +220,7 @@ async function runHistorical(job: SyncJob, shopDomain: string) {
         },
       });
       if (status.status === "COMPLETED" && status.url) {
-        await ingestBulkOrders(job.storeId, status.url, {
+        await ingestBulkOrders(job.storeId, shopDomain, status.url, {
           total,
           onProgress: (p) =>
             progress(job.id, {

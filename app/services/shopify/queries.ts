@@ -19,17 +19,65 @@ export const ORDER_FIELDS = /* GraphQL */ `
     displayFinancialStatus
     displayFulfillmentStatus
     sourceName
-    customer { id }
-    shippingAddress { countryCodeV2 }
-    subtotalPriceSet { shopMoney { amount currencyCode } }
-    totalDiscountsSet { shopMoney { amount currencyCode } }
-    totalShippingPriceSet { shopMoney { amount currencyCode } }
-    totalTaxSet { shopMoney { amount currencyCode } }
-    totalTipReceivedSet { shopMoney { amount currencyCode } }
-    totalPriceSet { shopMoney { amount currencyCode } }
-    totalRefundedSet { shopMoney { amount currencyCode } }
-    currentTotalDutiesSet { shopMoney { amount currencyCode } }
+    customer {
+      id
+    }
+    shippingAddress {
+      countryCodeV2
+    }
+    subtotalPriceSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    totalDiscountsSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    totalShippingPriceSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    totalTaxSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    totalTipReceivedSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    totalPriceSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    totalRefundedSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
+    currentTotalDutiesSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
     lineItems(first: 100) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
         title
@@ -38,49 +86,122 @@ export const ORDER_FIELDS = /* GraphQL */ `
         currentQuantity
         requiresShipping
         isGiftCard
-        product { id }
-        variant { id }
-        originalUnitPriceSet { shopMoney { amount currencyCode } }
-        totalDiscountSet { shopMoney { amount currencyCode } }
-        taxLines { priceSet { shopMoney { amount currencyCode } } }
+        product {
+          id
+        }
+        variant {
+          id
+        }
+        originalUnitPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        totalDiscountSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        taxLines {
+          priceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
       }
     }
     refunds {
       id
       createdAt
-      totalRefundedSet { shopMoney { amount currencyCode } }
+      totalRefundedSet {
+        shopMoney {
+          amount
+          currencyCode
+        }
+      }
       refundLineItems(first: 100) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           quantity
           restockType
-          lineItem { id }
-          subtotalSet { shopMoney { amount currencyCode } }
-          totalTaxSet { shopMoney { amount currencyCode } }
+          lineItem {
+            id
+          }
+          subtotalSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          totalTaxSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
         }
       }
       refundShippingLines(first: 20) {
-        nodes { subtotalAmountSet { shopMoney { amount currencyCode } } }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          subtotalAmountSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          taxAmountSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
       }
     }
-    transactions(first: 50) {
+    transactions {
       id
       kind
       status
       gateway
       processedAt
       test
-      amountSet { shopMoney { amount currencyCode } }
-      fees { amount { amount currencyCode } }
+      amountSet {
+        shopMoney {
+          amount
+          currencyCode
+        }
+      }
+      fees {
+        amount {
+          amount
+          currencyCode
+        }
+      }
     }
   }
 `;
 
 export const ORDERS_PAGE_QUERY = /* GraphQL */ `
-  ${ORDER_FIELDS}
   query ProfitPilotOrders($first: Int!, $after: String, $query: String) {
     orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) {
-      pageInfo { hasNextPage endCursor }
-      nodes { ...ProfitPilotOrder }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+      }
     }
   }
 `;
@@ -88,38 +209,21 @@ export const ORDERS_PAGE_QUERY = /* GraphQL */ `
 export const ORDER_BY_ID_QUERY = /* GraphQL */ `
   ${ORDER_FIELDS}
   query ProfitPilotOrder($id: ID!) {
-    order(id: $id) { ...ProfitPilotOrder }
+    order(id: $id) {
+      ...ProfitPilotOrder
+    }
   }
 `;
 
 export const PRODUCTS_PAGE_QUERY = /* GraphQL */ `
   query ProfitPilotProducts($first: Int!, $after: String, $query: String) {
     products(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) {
-      pageInfo { hasNextPage endCursor }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
-        title
-        handle
-        status
-        vendor
-        productType
-        updatedAt
-        featuredMedia { preview { image { url } } }
-        variants(first: 100) {
-          nodes {
-            id
-            title
-            sku
-            barcode
-            price
-            compareAtPrice
-            updatedAt
-            inventoryItem {
-              id
-              unitCost { amount currencyCode }
-            }
-          }
-        }
       }
     }
   }
@@ -135,8 +239,18 @@ export const PRODUCT_BY_ID_QUERY = /* GraphQL */ `
       vendor
       productType
       updatedAt
-      featuredMedia { preview { image { url } } }
+      featuredMedia {
+        preview {
+          image {
+            url
+          }
+        }
+      }
       variants(first: 100) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           id
           title
@@ -145,7 +259,13 @@ export const PRODUCT_BY_ID_QUERY = /* GraphQL */ `
           price
           compareAtPrice
           updatedAt
-          inventoryItem { id unitCost { amount currencyCode } }
+          inventoryItem {
+            id
+            unitCost {
+              amount
+              currencyCode
+            }
+          }
         }
       }
     }
@@ -159,26 +279,194 @@ export const SHOP_QUERY = /* GraphQL */ `
       name
       email
       myshopifyDomain
-      primaryDomain { host }
+      primaryDomain {
+        host
+      }
       currencyCode
       ianaTimezone
       taxesIncluded
-      plan { partnerDevelopment shopifyPlus }
+      plan {
+        partnerDevelopment
+        shopifyPlus
+      }
     }
   }
 `;
 
 export const ORDERS_COUNT_QUERY = /* GraphQL */ `
   query ProfitPilotOrdersCount($query: String) {
-    ordersCount(query: $query, limit: null) { count precision }
+    ordersCount(query: $query, limit: null) {
+      count
+      precision
+    }
   }
 `;
 
 export const BULK_ORDERS_QUERY = /* GraphQL */ `
-  ${ORDER_FIELDS}
   query ProfitPilotBulkOrders($query: String) {
     orders(query: $query) {
-      edges { node { ...ProfitPilotOrder } }
+      edges {
+        node {
+          id
+        }
+      }
+    }
+  }
+`;
+
+// Bulk exports discover IDs only. Every order is fetched through the same complete
+// cursor-paginated path, avoiding ambiguous flattened refund connection records.
+export const ORDER_LINES_PAGE_QUERY = /* GraphQL */ `
+  query ProfitPilotOrderLines($id: ID!, $after: String!) {
+    order(id: $id) {
+      id
+      updatedAt
+      lineItems(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          title
+          sku
+          quantity
+          currentQuantity
+          requiresShipping
+          isGiftCard
+          product {
+            id
+          }
+          variant {
+            id
+          }
+          originalUnitPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          totalDiscountSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          taxLines {
+            priceSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const REFUND_LINES_PAGE_QUERY = /* GraphQL */ `
+  query ProfitPilotRefundLines($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on Refund {
+        id
+        refundLineItems(first: 100, after: $after) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            quantity
+            restockType
+            lineItem {
+              id
+            }
+            subtotalSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+            totalTaxSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const REFUND_SHIPPING_PAGE_QUERY = /* GraphQL */ `
+  query ProfitPilotRefundShipping($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on Refund {
+        id
+        refundShippingLines(first: 100, after: $after) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            subtotalAmountSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+            taxAmountSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const PRODUCT_VARIANTS_PAGE_QUERY = /* GraphQL */ `
+  query ProfitPilotProductVariants($id: ID!, $after: String!) {
+    product(id: $id) {
+      id
+      updatedAt
+      variants(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          title
+          sku
+          barcode
+          price
+          compareAtPrice
+          updatedAt
+          inventoryItem {
+            id
+            unitCost {
+              amount
+              currencyCode
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const ORDER_VERSION_QUERY = /* GraphQL */ `
+  query ProfitPilotOrderVersion($id: ID!) {
+    order(id: $id) {
+      id
+      updatedAt
     }
   }
 `;
@@ -186,8 +474,14 @@ export const BULK_ORDERS_QUERY = /* GraphQL */ `
 export const BULK_RUN_MUTATION = /* GraphQL */ `
   mutation ProfitPilotBulkRun($query: String!) {
     bulkOperationRunQuery(query: $query) {
-      bulkOperation { id status }
-      userErrors { field message }
+      bulkOperation {
+        id
+        status
+      }
+      userErrors {
+        field
+        message
+      }
     }
   }
 `;
@@ -209,14 +503,24 @@ export const BULK_STATUS_QUERY = /* GraphQL */ `
 
 export const CURRENT_BULK_QUERY = /* GraphQL */ `
   query ProfitPilotCurrentBulk {
-    currentBulkOperation(type: QUERY) { id status errorCode url objectCount }
+    currentBulkOperation(type: QUERY) {
+      id
+      status
+      errorCode
+      url
+      objectCount
+    }
   }
 `;
 
 export const WEBHOOK_SUBSCRIPTIONS_QUERY = /* GraphQL */ `
   query ProfitPilotWebhooks {
     webhookSubscriptions(first: 50) {
-      nodes { id topic uri }
+      nodes {
+        id
+        topic
+        uri
+      }
     }
   }
 `;
