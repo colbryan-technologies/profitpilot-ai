@@ -48,7 +48,7 @@ export async function formResult(work: () => Promise<string>) {
     if (err instanceof Response && err.status >= 400 && err.status < 500)
       return data(
         { error: await err.text(), message: undefined },
-        { status: err.status },
+        { status: err.status, headers: err.headers },
       );
     logger.error(
       { errorType: err instanceof Error ? err.name : "unknown" },
@@ -60,7 +60,15 @@ export async function formResult(work: () => Promise<string>) {
           "The operation could not finish. Check data health before retrying; a saved change may still be waiting for recalculation.",
         message: undefined,
       },
-      { status: 503 },
+      {
+        status: 503,
+        headers: {
+          "Cache-Control": "no-store",
+          ...(err instanceof Response && err.headers.has("Retry-After")
+            ? { "Retry-After": err.headers.get("Retry-After")! }
+            : {}),
+        },
+      },
     );
   }
 }

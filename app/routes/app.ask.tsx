@@ -30,7 +30,7 @@ export async function action({ request }: ActionFunctionArgs) {
     if (err instanceof Response && err.status < 500)
       return data(
         { error: await err.text(), answer: null },
-        { status: err.status },
+        { status: err.status, headers: err.headers },
       );
     return data(
       {

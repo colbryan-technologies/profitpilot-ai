@@ -1,3 +1,5 @@
+import { consumeRateLimit } from "./rate-limit.server";
+import { env } from "../lib/env.server";
 import { authenticate } from "../shopify.server";
 import { requireStore } from "./store.server";
 import { isPeriodKey, resolvePeriod } from "../lib/dates";
@@ -8,6 +10,19 @@ export async function tenant(request: Request) {
   const store = await requireStore(auth.session.shop);
   if (store.status !== "ACTIVE")
     throw new Response("This installation is inactive", { status: 403 });
+  await consumeRateLimit(
+    store.id,
+    "requests",
+    env().RATE_LIMIT_PER_MINUTE,
+    60_000,
+  );
+  if (!["GET", "HEAD"].includes(request.method))
+    await consumeRateLimit(
+      store.id,
+      "mutations",
+      Math.min(60, env().RATE_LIMIT_PER_MINUTE),
+      60_000,
+    );
   return {
     ...auth,
     store,

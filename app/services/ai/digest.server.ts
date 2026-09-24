@@ -1,3 +1,4 @@
+import { consumeRateLimit } from "../rate-limit.server";
 import { requirePlanFeature } from "../billing.server";
 import { requireReadyReport } from "../report-readiness.server";
 import { savedBriefingState } from "../saved-reports.server";
@@ -63,6 +64,7 @@ export async function generateWeeklyDigest(
   });
   if (existing && (await savedBriefingState(existing)).available)
     return { id: existing.id, summary: existing.summary };
+  await consumeRateLimit(storeId, "briefing", 1, 5 * 60_000);
   const generatedAt = new Date();
 
   const grounding = await buildGrounding(storeId, "7d");
@@ -178,7 +180,7 @@ export async function runDueDigests(now = new Date()): Promise<number> {
       await generateWeeklyDigest(s.id);
       n++;
     } catch (err) {
-      if (err instanceof Response && err.status === 403) continue;
+      if (err instanceof Response && [403, 429].includes(err.status)) continue;
       logger.error(
         { storeId: s.id, err: (err as Error).message },
         "digest generation failed",

@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { consumeRateLimit } from "../services/rate-limit.server";
 import { storedCoverage } from "../services/import-coverage.server";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
@@ -52,6 +53,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const { store } = await tenant(request);
   const form = await formData(request);
   return formResult(async () => {
+    await consumeRateLimit(store.id, "sync", 3, 5 * 60_000);
     if (form.intent === "recalculate") await enqueueRecalculate(store.id);
     else if (form.intent === "resync")
       await startInitialSync(store.id, store.shopDomain);
