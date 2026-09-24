@@ -1,6 +1,8 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
 import { orderHistoryBounds } from "../services/report-access.server";
+import { requireReadyReport } from "../services/report-readiness.server";
+import { dayFromString, localDateString, addDays } from "../lib/dates";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
 import {
@@ -23,6 +25,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     include: { lineItems: true, refunds: true, transactions: true },
   });
   if (!row) throw new Response("Order not found", { status: 404 });
+  const start = dayFromString(
+    localDateString(row.processedAt, store.ianaTimezone),
+  );
+  await requireReadyReport(store.id, { start, end: addDays(start, 1) });
   return {
     name: row.name,
     p: computeOrderProfit(
@@ -95,3 +101,5 @@ export default function OrderDetail() {
     </Page>
   );
 }
+
+export { ReportErrorBoundary as ErrorBoundary } from "../components/report-error";

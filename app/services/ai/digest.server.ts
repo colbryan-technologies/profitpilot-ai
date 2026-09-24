@@ -1,5 +1,6 @@
 import { requirePlanFeature } from "../billing.server";
 import { requireReadyReport } from "../report-readiness.server";
+import { savedBriefingState } from "../saved-reports.server";
 import prisma from "../../db.server";
 import { logger } from "../../lib/logger.server";
 import { previousPeriod, resolvePeriod } from "../../lib/dates";
@@ -60,7 +61,9 @@ export async function generateWeeklyDigest(
       },
     },
   });
-  if (existing) return { id: existing.id, summary: existing.summary };
+  if (existing && (await savedBriefingState(existing)).available)
+    return { id: existing.id, summary: existing.summary };
+  const generatedAt = new Date();
 
   const grounding = await buildGrounding(storeId, "7d");
   const { allowedNumbers: _omit, ...data } = grounding;
@@ -113,16 +116,28 @@ export async function generateWeeklyDigest(
       );
     summary = deterministicDigest(grounding);
   }
-  const row = await prisma.intelligenceDigest.create({
-    data: {
+  const content = {
+    createdAt: generatedAt,
+    periodEnd: period.end,
+    metricsJson: JSON.parse(
+      JSON.stringify({ ...data, previous: previousPeriod(period) }),
+    ),
+    summary,
+  };
+  const row = await prisma.intelligenceDigest.upsert({
+    where: {
+      storeId_kind_periodStart: {
+        storeId,
+        kind: "WEEKLY",
+        periodStart: period.start,
+      },
+    },
+    update: content,
+    create: {
+      ...content,
       storeId,
       kind: "WEEKLY",
       periodStart: period.start,
-      periodEnd: period.end,
-      metricsJson: JSON.parse(
-        JSON.stringify({ ...data, previous: previousPeriod(period) }),
-      ),
-      summary,
     },
   });
   return { id: row.id, summary };

@@ -1,6 +1,9 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
 import { orderHistoryBounds } from "../services/report-access.server";
+import { reportReadiness } from "../services/report-readiness.server";
+import { CALC_VERSION } from "../domain/profit/types";
+import { dayFromString, localDateString, addDays } from "../lib/dates";
 import prisma from "../db.server";
 import { tenant, pageNumber } from "../services/tenant.server";
 import { formatMoney } from "../lib/money";
@@ -25,12 +28,46 @@ export async function loader({ request }: LoaderFunctionArgs) {
       currency: true,
       contributionProfitMinor: true,
       computedAt: true,
+      calcVersion: true,
+      shopifyUpdatedAt: true,
       cogsCoverage: true,
       isTest: true,
       financialStatus: true,
     },
   });
-  return { rows: rows.slice(0, 50), page, more: rows.length > 50 };
+  const days = [
+    ...new Set(
+      rows
+        .slice(0, 50)
+        .map((r) => localDateString(r.processedAt, store.ianaTimezone)),
+    ),
+  ];
+  days.sort();
+  const ready =
+    days.length > 0 &&
+    (
+      await reportReadiness(store.id, {
+        start: dayFromString(days[0]),
+        end: addDays(dayFromString(days[days.length - 1]), 1),
+      })
+    ).ready;
+  return {
+    rows: rows.slice(0, 50).map((r) => {
+      const current =
+        ready &&
+        r.calcVersion === CALC_VERSION &&
+        r.computedAt !== null &&
+        r.computedAt >= r.shopifyUpdatedAt;
+      return {
+        ...r,
+        contributionProfitMinor: current ? r.contributionProfitMinor : null,
+        cogsCoverage: current ? r.cogsCoverage : null,
+        computedAt: current ? r.computedAt : null,
+      };
+    }),
+    page,
+    more: rows.length > 50,
+  };
 }
 export default function Orders() {
   const d = useLoaderData<typeof loader>();
@@ -65,7 +102,7 @@ export default function Orders() {
                   <td>
                     {o.computedAt && o.contributionProfitMinor !== null
                       ? formatMoney(o.contributionProfitMinor, o.currency)
-                      : "Awaiting calculation"}
+                      : "Data needs refresh"}
                   </td>
                   <td>
                     {o.cogsCoverage === null ? "—" : `${o.cogsCoverage}%`}

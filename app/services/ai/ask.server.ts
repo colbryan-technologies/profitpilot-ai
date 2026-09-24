@@ -1,3 +1,4 @@
+import { currentConversationHistory } from "./history";
 import { z } from "zod";
 import prisma from "../../db.server";
 import { logger } from "../../lib/logger.server";
@@ -165,14 +166,12 @@ export async function askProfitPilot(params: {
       include: { messages: true },
     }));
 
-  const history: ChatMessage[] = [...(convo.messages ?? [])]
-    .reverse()
-    .map((m) => ({
-      role: m.role === "USER" ? "user" : "assistant",
-      content: m.content,
-    }));
   const { allowedNumbers: _omit, ...dataBlock } = grounding;
   void _omit;
+  const history = currentConversationHistory(
+    [...(convo.messages ?? [])].reverse(),
+    dataBlock,
+  );
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     {
