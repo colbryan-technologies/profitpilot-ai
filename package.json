@@ -26,7 +26,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "worker": "node ./build/worker/index.js",
-    "worker:dev": "tsx watch ./worker/index.ts"
+    "worker:dev": "tsx watch ./worker/index.ts",
+    "check:release": "tsx scripts/preflight.ts"
   },
   "type": "module",
   "engines": {

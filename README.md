@@ -37,7 +37,10 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npm run check:release
 ```
+
+The offline release check validates privately supplied production settings and built entry points; it does not connect to services or deploy. See [live validation handoff](docs/audit/2026-09-24-live-validation.md) for the remaining setup and acceptance evidence.
 
 The build produces `build/server/index.js` and `build/worker/index.js`. Run these with `npm start` and `npm run worker` as separate processes. Apply database migrations once as a release step before starting either process. Back up the database first; schema rollback is not automatic.
 
