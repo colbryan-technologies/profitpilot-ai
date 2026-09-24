@@ -9,7 +9,7 @@ import {
   estimateCostMicros,
   type ChatMessage,
 } from "./provider.server";
-import { planFor } from "../billing.server";
+import { reserveAskUsage } from "../billing.server";
 
 const MAX_QUESTION_CHARS = 1_000;
 const MAX_HISTORY = 6;
@@ -130,27 +130,7 @@ export async function askProfitPilot(params: {
   const question = params.question.trim().slice(0, MAX_QUESTION_CHARS);
   if (!question) throw new Response("Question is required", { status: 400 });
 
-  const [subscription, todayCount] = await Promise.all([
-    prisma.subscription.findUnique({
-      where: { storeId: params.storeId },
-      select: { planKey: true, status: true },
-    }),
-    prisma.aiUsage.count({
-      where: {
-        storeId: params.storeId,
-        feature: "ask",
-        createdAt: { gte: new Date(Date.now() - 86_400_000) },
-      },
-    }),
-  ]);
-  const limit = planFor(
-    subscription?.status === "ACTIVE" ? subscription.planKey : "free",
-  ).askPerDay;
-  if (todayCount >= limit)
-    throw new Response(
-      `Daily Ask ProfitPilot limit reached (${limit}). Upgrade your plan for more.`,
-      { status: 429 },
-    );
+  const usage = await reserveAskUsage(params.storeId);
 
   const periodKey = periodSchema.safeParse(params.period).success
     ? (params.period as PeriodKey)
@@ -219,7 +199,8 @@ export async function askProfitPilot(params: {
       answer = deterministicFallback(grounding);
       fallback = true;
     }
-    await prisma.aiUsage.create({
+    await prisma.aiUsage.update({
+      where: { id: usage.id },
       data: {
         storeId: params.storeId,
         feature: "ask",
@@ -246,7 +227,8 @@ export async function askProfitPilot(params: {
         "ask: provider failed, using fallback",
       );
     }
-    await prisma.aiUsage.create({
+    await prisma.aiUsage.update({
+      where: { id: usage.id },
       data: {
         storeId: params.storeId,
         feature: "ask",

@@ -54,6 +54,10 @@ export default function Ask() {
         <Link to="/app/notifications">Manage AI sharing</Link>.
       </Notice>
       <Card title="What would you like to investigate?">
+        <p>
+          Your question allowance covers a rolling 24 hours. Submitted attempts
+          count, including fallback summaries and interrupted requests.
+        </p>
         <Form method="post">
           <label className="pp-field">
             Your question
