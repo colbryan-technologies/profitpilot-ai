@@ -20,6 +20,7 @@
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test": "vitest run",
+    "test:startup": "node scripts/check-production-startup.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "format": "prettier --write .",
@@ -86,6 +87,9 @@
     "@shopify/plugin-cloudflare"
   ],
   "overrides": {
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.2"
+    },
     "lodash": "^4.18.1",
     "minimatch@9": "^9.0.9",
     "p-map": "^4.0.0",

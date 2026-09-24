@@ -30,9 +30,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
       - run: npx prisma generate && npx prisma validate
       - run: npx prisma migrate deploy
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: npm run test:startup
