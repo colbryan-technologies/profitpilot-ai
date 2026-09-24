@@ -40,6 +40,14 @@ describe.skipIf(process.env.RUN_INTEGRATION_TESTS !== "1")(
       await prisma.syncJob.create({
         data: {
           storeId,
+          paramsJson: {
+            importWindow: {
+              version: 1,
+              kind: "historical",
+              since: new Date(Date.now() - 3 * 86400000).toISOString(),
+              through: new Date().toISOString(),
+            },
+          },
           type: "HISTORICAL_ORDERS",
           status: "COMPLETED",
           finishedAt: new Date(),

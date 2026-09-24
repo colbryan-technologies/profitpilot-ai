@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { storedCoverage } from "../services/import-coverage.server";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
 import { startInitialSync } from "../services/jobs/sync-runner.server";
@@ -35,7 +36,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       where: { storeId: store.id, status: { in: ["FAILED", "DEAD_LETTER"] } },
     }),
   ]);
+  const coverage = await storedCoverage(store.id, store.ianaTimezone);
   return {
+    coverage: coverage.ranges,
+    coveredDays: coverage.days.size,
     jobs,
     orders,
     variants,
@@ -49,6 +53,8 @@ export async function action({ request }: ActionFunctionArgs) {
   const form = await formData(request);
   return formResult(async () => {
     if (form.intent === "recalculate") await enqueueRecalculate(store.id);
+    else if (form.intent === "resync")
+      await startInitialSync(store.id, store.shopDomain);
     else if (form.intent === "sync") {
       const history = await prisma.syncJob.findFirst({
         where: {
@@ -98,10 +104,30 @@ export default function Health() {
           <Submit name="intent" value="sync">
             Synchronize
           </Submit>
+          <Submit name="intent" value="resync">
+            Reimport history
+          </Submit>
           <Submit name="intent" value="recalculate">
             Recalculate
           </Submit>
         </Form>
+      </Card>
+      <Card title="Recorded import coverage">
+        <p>
+          {d.coveredDays} store-calendar days covered by completed imports.
+          Today is provisional.
+        </p>
+        {d.coverage.map((r, i) => (
+          <p key={i}>
+            {new Date(r.start).toISOString()} to {new Date(r.end).toISOString()}
+          </p>
+        ))}
+        {!d.coverage.length && (
+          <p>
+            No recorded coverage yet. Reimport history after verifying Shopify
+            permissions; older imports do not establish date coverage.
+          </p>
+        )}
       </Card>
       <Card title="Profit Confidence">
         {d.confidence ? (

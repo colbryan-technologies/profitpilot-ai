@@ -1,4 +1,5 @@
 import type { SyncJob } from "@prisma/client";
+import { importWindow, type ImportWindow } from "../import-coverage.server";
 import prisma from "../../db.server";
 import { logger } from "../../lib/logger.server";
 import { ShopifyGraphqlError } from "../shopify/admin.server";
@@ -21,6 +22,8 @@ import {
   enqueueSync,
   type SyncJobData,
 } from "./queue.server";
+
+class ImportConfigurationError extends Error {}
 
 const HISTORY_DAYS_DEFAULT = 365;
 const BULK_TIMEOUT_MS = 6 * 3_600_000;
@@ -136,8 +139,8 @@ export async function runSyncJob(data: SyncJobData): Promise<void> {
         throw new Error(`Unsupported sync job type ${job.type}`);
     }
     if (await isCancelled(job.id)) return;
-    await prisma.syncJob.update({
-      where: { id: job.id },
+    const completed = await prisma.syncJob.updateMany({
+      where: { id: job.id, status: "RUNNING" },
       data: {
         status: "COMPLETED",
         progress: 100,
@@ -145,11 +148,16 @@ export async function runSyncJob(data: SyncJobData): Promise<void> {
         lastError: null,
       },
     });
+    if (!completed.count) return;
+    if (job.type === "HISTORICAL_ORDERS" || job.type === "INCREMENTAL_ORDERS")
+      await enqueueRecalculate(data.storeId, null);
     log.info("sync job completed");
   } catch (err) {
     if (await isCancelled(job.id)) return;
     const message = (err as Error).message;
-    const retryable = !(err instanceof ShopifyGraphqlError && !err.retryable);
+    const retryable =
+      !(err instanceof ImportConfigurationError) &&
+      !(err instanceof ShopifyGraphqlError && !err.retryable);
     await prisma.syncJob.update({
       where: { id: job.id },
       data: {
@@ -177,11 +185,39 @@ async function runHistorical(job: SyncJob, shopDomain: string) {
     days?: number;
     mode?: "bulk" | "paginated";
     bulkId?: string | null;
+    importWindow?: ImportWindow;
   };
+  const through = new Date(params.importWindow?.through ?? job.createdAt);
+  const days = params.days ?? HISTORY_DAYS_DEFAULT;
+  if (!Number.isInteger(days) || days < 1 || days > 1095)
+    throw new ImportConfigurationError("Invalid import history length");
   const since = new Date(
-    Date.now() - (params.days ?? HISTORY_DAYS_DEFAULT) * 86_400_000,
+    params.importWindow?.since ?? through.getTime() - days * 86_400_000,
   );
-  const query = historicalOrdersQuery(since);
+  if (!params.importWindow && job.cursor)
+    throw new ImportConfigurationError(
+      "Legacy resumed import needs a fresh historical resync",
+    );
+  const installation = await prisma.installation.findFirst({
+    where: { storeId: job.storeId, uninstalledAt: null },
+    orderBy: { installedAt: "desc" },
+    select: { grantedScopes: true },
+  });
+  if (
+    !installation?.grantedScopes
+      .split(",")
+      .map((s) => s.trim())
+      .includes("read_all_orders")
+  )
+    throw new ImportConfigurationError(
+      "Historical processed-date coverage requires read_all_orders access; verify Shopify permissions before resyncing.",
+    );
+  params.importWindow = importWindow("historical", since, through);
+  await prisma.syncJob.update({
+    where: { id: job.id },
+    data: { paramsJson: { ...params } },
+  });
+  const query = historicalOrdersQuery(since, through);
   const total = job.total ?? (await countOrders(shopDomain, query));
   if (total !== null && job.total === null) await progress(job.id, { total });
 
@@ -233,7 +269,6 @@ async function runHistorical(job: SyncJob, shopDomain: string) {
                 : undefined,
             }),
         });
-        await afterOrderSync(job.storeId, shopDomain, since);
         return;
       }
       logger.warn(
@@ -263,7 +298,6 @@ async function runHistorical(job: SyncJob, shopDomain: string) {
       progress(job.id, { ...p, processed: (job.processed ?? 0) + p.processed }),
     shouldStop: () => isCancelled(job.id),
   });
-  await afterOrderSync(job.storeId, shopDomain, since);
 }
 
 async function runIncremental(job: SyncJob, shopDomain: string) {
@@ -275,30 +309,39 @@ async function runIncremental(job: SyncJob, shopDomain: string) {
       id: { not: job.id },
     },
     orderBy: { startedAt: "desc" },
-    select: { startedAt: true },
+    select: { startedAt: true, paramsJson: true },
   });
-  const since = last?.startedAt ?? new Date(Date.now() - 86_400_000);
-  const query = incrementalOrdersQuery(since);
-  const result = await syncOrdersPaginated(job.storeId, shopDomain, {
+  const params = job.paramsJson as { importWindow?: ImportWindow };
+  if (!params.importWindow && job.cursor)
+    throw new ImportConfigurationError(
+      "Legacy resumed import needs a fresh sync",
+    );
+  const through = new Date(params.importWindow?.through ?? job.createdAt);
+  const since = new Date(
+    params.importWindow?.since ??
+      ((last?.paramsJson as { importWindow?: ImportWindow })?.importWindow
+        ?.through
+        ? new Date(
+            (last!.paramsJson as unknown as { importWindow: ImportWindow })
+              .importWindow.through,
+          ).getTime() -
+          5 * 60_000
+        : (last?.startedAt?.getTime() ?? through.getTime() - 86_400_000)),
+  );
+  params.importWindow = importWindow("incremental", since, through);
+  await prisma.syncJob.update({
+    where: { id: job.id },
+    data: { paramsJson: { ...params } },
+  });
+  const query = incrementalOrdersQuery(since, through);
+  await syncOrdersPaginated(job.storeId, shopDomain, {
     query,
     cursor: job.cursor,
     onProgress: (p) => progress(job.id, p),
     shouldStop: () => isCancelled(job.id),
   });
   await syncProducts(job.storeId, shopDomain, { since });
-  if (result.processed > 0)
-    await afterOrderSync(job.storeId, shopDomain, since);
-}
-
-async function afterOrderSync(
-  storeId: string,
-  _shopDomain: string,
-  since: Date,
-) {
-  void since;
-  // An order updated today may have been placed years ago. The worker runs
-  // detection after this rebuild, so alerts cannot race ahead of snapshots.
-  await enqueueRecalculate(storeId, null);
+  if (await isCancelled(job.id)) return;
 }
 
 /** Kick off the full initial import for a freshly installed store. */

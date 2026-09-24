@@ -1,3 +1,4 @@
+import { storedCoverage } from "./import-coverage.server";
 import prisma from "../db.server";
 import { CALC_VERSION } from "../domain/profit/types";
 import {
@@ -16,6 +17,7 @@ export interface ReadinessInput {
   staleAds: number;
   now?: Date;
   today?: Date;
+  coveredDays?: Set<string>;
 }
 /** Conservative display gate; missing dates are not evidence of zero activity. */
 export function assessReadiness(input: ReadinessInput) {
@@ -37,6 +39,14 @@ export function assessReadiness(input: ReadinessInput) {
   let missingDays = 0;
   for (let d = input.period.start; d < input.period.end; d = addDays(d, 1))
     if (!dates.has(d.toISOString().slice(0, 10))) missingDays++;
+  let uncoveredDays = 0;
+  if (input.coveredDays)
+    for (let d = input.period.start; d < input.period.end; d = addDays(d, 1))
+      if (!input.coveredDays.has(d.toISOString().slice(0, 10))) uncoveredDays++;
+  if (uncoveredDays)
+    reasons.push(
+      `${uncoveredDays} day(s) lack recorded import coverage. Run a historical resync in Data health.`,
+    );
   if (missingDays)
     reasons.push(
       `${missingDays} day(s) have no calculated snapshot. Missing days are not treated as zero profit.`,
@@ -121,7 +131,9 @@ export async function reportReadiness(
       ],
     },
   });
-  return assessReadiness({
+  const coverage = await storedCoverage(storeId, store.ianaTimezone, now);
+  const result = assessReadiness({
+    coveredDays: coverage.days,
     period,
     today: dayFromString(localDateString(now, store.ianaTimezone)),
     snapshots,
@@ -136,6 +148,11 @@ export async function reportReadiness(
     ).length,
     now,
   });
+  if (period.end > dayFromString(localDateString(now, store.ianaTimezone)))
+    result.warnings.push(
+      "Today is still in progress; figures reflect imports completed so far.",
+    );
+  return result;
 }
 export async function requireReadyReport(
   storeId: string,

@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { storedCoverage } from "../import-coverage.server";
 import prisma from "../../db.server";
 import { HistoryCogsResolver } from "../../domain/profit/cogs";
 import { computeOrderProfit } from "../../domain/profit/order";
@@ -461,6 +462,10 @@ export async function recalculateStore(
     select: { processedAt: true },
   });
   const allDays = new Set(days);
+  const coverage = await storedCoverage(storeId, store.ianaTimezone);
+  for (const day of coverage.days)
+    if (!opts.since || day >= localDateString(opts.since, store.ianaTimezone))
+      allDays.add(day);
   // Rebuild persisted dates even after their last order is deleted.
   const existingDays = await prisma.profitSnapshot.findMany({
     where: {

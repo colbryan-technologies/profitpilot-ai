@@ -391,12 +391,12 @@ export async function ingestBulkOrders(
   return processed;
 }
 
-export function historicalOrdersQuery(since: Date): string {
-  return `created_at:>='${since.toISOString()}'`;
+export function historicalOrdersQuery(since: Date, through?: Date): string {
+  return `processed_at:>='${since.toISOString()}'${through ? ` processed_at:<'${through.toISOString()}'` : ""}`;
 }
 
-export function incrementalOrdersQuery(since: Date): string {
+export function incrementalOrdersQuery(since: Date, through?: Date): string {
   // Small overlap protects against clock skew between Shopify and our last sync marker.
   const overlap = new Date(since.getTime() - 5 * 60_000);
-  return `updated_at:>='${overlap.toISOString()}'`;
+  return `updated_at:>='${overlap.toISOString()}'${through ? ` updated_at:<'${through.toISOString()}'` : ""}`;
 }
