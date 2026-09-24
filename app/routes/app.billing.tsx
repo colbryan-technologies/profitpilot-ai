@@ -7,6 +7,7 @@ import {
   planSelectionUrl,
   PLANS,
 } from "../services/billing.server";
+import { monthlyOrderUsage } from "../services/report-access.server";
 import { env } from "../lib/env.server";
 import { Page, Card, Notice } from "../components/ui";
 
@@ -18,6 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     store.shopifyShopId ? `gid://shopify/Shop/${store.shopifyShopId}` : null,
   );
   return {
+    usage: await monthlyOrderUsage(store.id),
     plan: result.plan,
     source: result.source,
     active: result.active,
@@ -50,6 +52,22 @@ export default function Billing() {
           </s-link>
         )}
       </Card>
+      <Card title="Monthly order usage">
+        <p>
+          {d.usage.count} recorded non-test orders in {d.usage.month} ·
+          allowance: {d.usage.limit ?? "Unlimited"}.
+        </p>
+        <p>
+          Usage reflects synchronized records and may lag Shopify. Orders above
+          the allowance remain included in profit calculations.
+        </p>
+        {d.usage.exceeded && (
+          <p>
+            Your recorded orders exceed this plan’s allowance. Choose a larger
+            plan for your store.
+          </p>
+        )}
+      </Card>
       <Card title="Configured plan allowances">
         <div className="pp-table-wrap">
           <table>
@@ -74,9 +92,9 @@ export default function Billing() {
           </table>
         </div>
         <p>
-          History and order allowances are configuration targets pending
-          complete enforcement and billing acceptance tests. This build is not
-          ready for paid merchant onboarding.
+          History access follows the configured day allowance. Monthly order
+          allowances currently show upgrade notices without cutting reports.
+          This build is not ready for paid merchant onboarding.
         </p>
       </Card>
     </Page>

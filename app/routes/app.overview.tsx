@@ -1,1 +1,1 @@
-export { loader, default } from "./app._index";
+export { loader, default, ErrorBoundary } from "./app._index";

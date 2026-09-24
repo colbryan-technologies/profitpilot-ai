@@ -20,7 +20,7 @@ export type PlanKey = "free" | "starter" | "growth" | "pro" | "scale";
 export interface PlanDefinition {
   key: PlanKey;
   name: string;
-  /** Monthly orders included (soft limit used for messaging, enforced on sync depth). */
+  /** Monthly order allowance (soft upgrade notice; ingestion is never truncated). */
   orderLimit: number | null;
   historyDays: number;
   askPerDay: number;

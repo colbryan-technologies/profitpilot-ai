@@ -1,17 +1,24 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
 import { storeEntitlements } from "../services/billing.server";
+import { reportWindow } from "../services/report-access.server";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
 import { Page, Card } from "../components/ui";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
+  const history = await reportWindow(store.id);
   const { plan } = await storeEntitlements(store.id);
   if (!plan.digest) return { available: false, reports: [] };
   return {
     available: true,
     reports: await prisma.intelligenceDigest.findMany({
-      where: { storeId: store.id },
+      where: {
+        storeId: store.id,
+        periodStart: {
+          gte: new Date(history.start.getTime() + 7 * 86_400_000),
+        },
+      },
       orderBy: { createdAt: "desc" },
       take: 30,
       select: { id: true, summary: true, periodStart: true, periodEnd: true },

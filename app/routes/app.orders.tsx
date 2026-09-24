@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
+import { orderHistoryBounds } from "../services/report-access.server";
 import prisma from "../db.server";
 import { tenant, pageNumber } from "../services/tenant.server";
 import { formatMoney } from "../lib/money";
@@ -7,9 +8,13 @@ import { Page, Card, Pagination, Notice } from "../components/ui";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
+  const history = await orderHistoryBounds(store.id);
   const page = pageNumber(request);
   const rows = await prisma.order.findMany({
-    where: { storeId: store.id },
+    where: {
+      storeId: store.id,
+      processedAt: { gte: history.start, lt: history.end },
+    },
     orderBy: [{ processedAt: "desc" }, { id: "desc" }],
     skip: (page - 1) * 50,
     take: 51,

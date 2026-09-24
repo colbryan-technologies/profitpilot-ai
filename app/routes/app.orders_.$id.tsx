@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
+import { orderHistoryBounds } from "../services/report-access.server";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
 import {
@@ -12,8 +13,13 @@ import { Page, Card, Notice } from "../components/ui";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
+  const history = await orderHistoryBounds(store.id);
   const row = await prisma.order.findFirst({
-    where: { id: params.id, storeId: store.id },
+    where: {
+      id: params.id,
+      storeId: store.id,
+      processedAt: { gte: history.start, lt: history.end },
+    },
     include: { lineItems: true, refunds: true, transactions: true },
   });
   if (!row) throw new Response("Order not found", { status: 404 });

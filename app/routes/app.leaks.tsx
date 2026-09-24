@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
+import { reportWindow } from "../services/report-access.server";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
 import { formData, formResult } from "../services/form.server";
@@ -8,8 +9,13 @@ import type { LeakEvidence } from "../domain/leaks";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
+  const history = await reportWindow(store.id);
   const rows = await prisma.profitLeak.findMany({
-    where: { storeId: store.id, status: "OPEN" },
+    where: {
+      storeId: store.id,
+      status: "OPEN",
+      periodStart: { gte: new Date(history.start.getTime() + 7 * 86_400_000) },
+    },
     orderBy: { detectedAt: "desc" },
     take: 100,
   });

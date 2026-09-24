@@ -44,3 +44,5 @@ export default function ProductDetail() {
     </Page>
   );
 }
+
+export { ReportErrorBoundary as ErrorBoundary } from "../components/report-error";

@@ -1,5 +1,9 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, useLoaderData } from "react-router";
+import {
+  reportWindow,
+  monthlyOrderUsage,
+} from "../services/report-access.server";
 import prisma from "../db.server";
 import { tenant, requestPeriod } from "../services/tenant.server";
 import { periodSummary } from "../services/profit/reporting.server";
@@ -8,6 +12,7 @@ import { Page, Card, Notice, PeriodSelect } from "../components/ui";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
+  const history = await reportWindow(store.id);
   const period = requestPeriod(request, store.ianaTimezone);
   const [summary, snapshots, sync, pending, leaks] = await Promise.all([
     periodSummary(store.id, period),
@@ -32,13 +37,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     }),
     prisma.profitLeak.findMany({
-      where: { storeId: store.id, status: "OPEN" },
+      where: {
+        storeId: store.id,
+        status: "OPEN",
+        periodStart: {
+          gte: new Date(history.start.getTime() + 7 * 86_400_000),
+        },
+      },
       orderBy: { detectedAt: "desc" },
       take: 5,
       select: { id: true, title: true, severity: true },
     }),
   ]);
   return {
+    usage: await monthlyOrderUsage(store.id),
     summary,
     period: period.key,
     periodLabel: period.label,
@@ -66,6 +78,13 @@ export default function Dashboard() {
         </div>
         <PeriodSelect value={d.period} />
       </div>
+      {d.usage.exceeded && (
+        <Notice>
+          Your recorded monthly orders ({d.usage.count}) exceed your plan
+          allowance ({d.usage.limit}). All orders remain in your calculations.{" "}
+          <Link to="/app/billing">Review your plan</Link>.
+        </Notice>
+      )}
       {!ready && (
         <Notice>
           Your profit overview will appear after synchronization and calculation
@@ -170,3 +189,5 @@ export default function Dashboard() {
     </Page>
   );
 }
+
+export { ReportErrorBoundary as ErrorBoundary } from "../components/report-error";
