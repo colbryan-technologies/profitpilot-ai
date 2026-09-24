@@ -18,7 +18,7 @@
     "prisma": "prisma",
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
-    "typecheck": "react-router typegen && tsc --noEmit",
+    "typecheck": "react-router typegen && tsc --noEmit && tsc -p deploy/cloudflare/tsconfig.json",
     "test": "vitest run",
     "test:startup": "node scripts/check-production-startup.mjs",
     "test:watch": "vitest",
@@ -27,7 +27,8 @@
     "format:check": "prettier --check .",
     "worker": "node ./build/worker/index.js",
     "worker:dev": "tsx watch ./worker/index.ts",
-    "check:release": "tsx scripts/preflight.ts"
+    "check:release": "tsx scripts/preflight.ts",
+    "cloudflare:check": "wrangler deploy --dry-run --config deploy/cloudflare/wrangler.json"
   },
   "type": "module",
   "engines": {
@@ -55,6 +56,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "@cloudflare/workers-types": "5.20260924.1",
     "@shopify/api-codegen-preset": "^2.0.0",
     "@shopify/polaris-types": "1.0.1",
     "@types/eslint": "^9.6.1",
@@ -77,7 +80,8 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "wrangler": "4.139.0"
   },
   "workspaces": {
     "packages": [

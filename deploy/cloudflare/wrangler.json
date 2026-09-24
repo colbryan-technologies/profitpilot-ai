@@ -1,0 +1,31 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "profitpilot-ai-staging",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-24",
+  "workers_dev": true,
+  "containers": [
+    {
+      "class_name": "ProfitPilotWeb",
+      "image": "../../Dockerfile",
+      "max_instances": 1,
+      "instance_type": "basic"
+    },
+    {
+      "class_name": "ProfitPilotJobs",
+      "image": "../../Dockerfile",
+      "max_instances": 1,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "WEB", "class_name": "ProfitPilotWeb" },
+      { "name": "JOBS", "class_name": "ProfitPilotJobs" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ProfitPilotWeb", "ProfitPilotJobs"] }
+  ],
+  "triggers": { "crons": ["*/5 * * * *"] }
+}
