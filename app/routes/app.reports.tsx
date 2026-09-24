@@ -1,11 +1,15 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import { Link, useLoaderData } from "react-router";
+import { storeEntitlements } from "../services/billing.server";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
 import { Page, Card } from "../components/ui";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
+  const { plan } = await storeEntitlements(store.id);
+  if (!plan.digest) return { available: false, reports: [] };
   return {
+    available: true,
     reports: await prisma.intelligenceDigest.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
@@ -15,9 +19,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
   };
 }
 export default function Reports() {
-  const { reports } = useLoaderData<typeof loader>();
+  const { reports, available } = useLoaderData<typeof loader>();
   return (
     <Page title="Profit briefings">
+      {!available && (
+        <Card title="Weekly briefings">
+          <p>
+            Weekly briefings are included with Starter and above.{" "}
+            <Link to="/app/billing">Manage your plan</Link>.
+          </p>
+        </Card>
+      )}
       {reports.map((r) => (
         <Card
           key={r.id}
@@ -26,7 +38,7 @@ export default function Reports() {
           <p className="pp-answer">{r.summary}</p>
         </Card>
       ))}
-      {!reports.length && (
+      {available && !reports.length && (
         <Card title="No briefings yet">
           <p>
             After synchronization, the worker generates a briefing at your

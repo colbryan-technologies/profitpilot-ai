@@ -1,5 +1,6 @@
 import type { CogsSource } from "@prisma/client";
 import { z } from "zod";
+import { requirePlanFeature } from "./billing.server";
 import prisma from "../db.server";
 import { toDecimalString, toMinor } from "../lib/money";
 import { audit } from "./store.server";
@@ -331,6 +332,7 @@ export async function importCogsCsv(
 
 /** Export current variants with latest cost, for editing offline and re-importing. */
 export async function exportCogsCsv(storeId: string): Promise<string> {
+  await requirePlanFeature(storeId, "csvExport");
   const [store, variants] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },

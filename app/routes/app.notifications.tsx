@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, Link, useActionData, useLoaderData } from "react-router";
+import { storeEntitlements } from "../services/billing.server";
 import prisma from "../db.server";
 import { tenant } from "../services/tenant.server";
 import { formData, formResult } from "../services/form.server";
@@ -12,7 +13,9 @@ import { env } from "../lib/env.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
+  const { plan } = await storeEntitlements(store.id);
   return {
+    digestAvailable: plan.digest,
     pref: await prisma.notificationPreference.findUnique({
       where: { storeId: store.id },
     }),
@@ -46,6 +49,12 @@ export default function Notifications() {
         Email delivery, daily briefings and external alert delivery are not
         enabled.
       </Notice>
+      {!d.digestAvailable && (
+        <Notice>
+          Weekly briefings require Starter or above.{" "}
+          <Link to="/app/billing">Manage your plan</Link>.
+        </Notice>
+      )}
       <Card title="Preferences">
         <Form method="post">
           <label className="pp-field">
@@ -53,7 +62,10 @@ export default function Notifications() {
               <input
                 type="checkbox"
                 name="weeklyDigest"
-                defaultChecked={d.pref?.weeklyDigest ?? true}
+                disabled={!d.digestAvailable}
+                defaultChecked={
+                  d.digestAvailable && (d.pref?.weeklyDigest ?? true)
+                }
               />{" "}
               Generate a weekly briefing
             </span>

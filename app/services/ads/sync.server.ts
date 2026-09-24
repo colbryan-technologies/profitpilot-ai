@@ -1,4 +1,6 @@
 import type { AdAccount, AdProvider } from "@prisma/client";
+import { storeEntitlements } from "../billing.server";
+import { lockStore } from "../erasure.server";
 import prisma from "../../db.server";
 import { decrypt, encrypt } from "../../lib/crypto.server";
 import { logger } from "../../lib/logger.server";
@@ -37,14 +39,19 @@ export async function saveCredentials(
   accountId: string,
   creds: ProviderCredentials,
 ) {
-  await prisma.adAccount.update({
+  const account = await prisma.adAccount.findUniqueOrThrow({
     where: { id: accountId },
-    data: {
-      credentialsEnc: encrypt(JSON.stringify(creds)),
-      status: "CONNECTED",
-      lastSyncError: null,
-    },
   });
+  await connectAdAccount(
+    account.storeId,
+    account.provider,
+    {
+      externalId: account.externalId,
+      name: account.name ?? "",
+      currency: account.currency,
+    },
+    creds,
+  );
 }
 
 export async function connectAdAccount(
@@ -53,30 +60,61 @@ export async function connectAdAccount(
   info: { externalId: string; name: string; currency: string },
   creds: ProviderCredentials,
 ) {
-  return prisma.adAccount.upsert({
-    where: {
-      storeId_provider_externalId: {
+  if (provider !== "META" && provider !== "GOOGLE")
+    throw new Response("This advertising provider is not supported", {
+      status: 400,
+    });
+  const { plan } = await storeEntitlements(storeId);
+  return prisma.$transaction(async (tx) => {
+    if (!(await lockStore(tx, storeId)))
+      throw new Error("Store no longer exists");
+    const accounts = await tx.adAccount.findMany({
+      where: {
+        storeId,
+        provider: { not: "MANUAL" },
+        status: { not: "DISCONNECTED" },
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { provider: true, externalId: true },
+    });
+    const existing = accounts.findIndex(
+      (a) => a.provider === provider && a.externalId === info.externalId,
+    );
+    if (
+      plan.adAccounts === 0 ||
+      (existing >= 0
+        ? existing >= plan.adAccounts
+        : accounts.length >= plan.adAccounts)
+    )
+      throw new Response(
+        "Connected advertising account allowance reached. Manage your plan in Billing.",
+        { status: 403 },
+      );
+    return tx.adAccount.upsert({
+      where: {
+        storeId_provider_externalId: {
+          storeId,
+          provider,
+          externalId: info.externalId,
+        },
+      },
+      create: {
         storeId,
         provider,
         externalId: info.externalId,
+        name: info.name,
+        currency: info.currency,
+        credentialsEnc: encrypt(JSON.stringify(creds)),
+        status: "CONNECTED",
       },
-    },
-    create: {
-      storeId,
-      provider,
-      externalId: info.externalId,
-      name: info.name,
-      currency: info.currency,
-      credentialsEnc: encrypt(JSON.stringify(creds)),
-      status: "CONNECTED",
-    },
-    update: {
-      name: info.name,
-      currency: info.currency,
-      credentialsEnc: encrypt(JSON.stringify(creds)),
-      status: "CONNECTED",
-      lastSyncError: null,
-    },
+      update: {
+        name: info.name,
+        currency: info.currency,
+        credentialsEnc: encrypt(JSON.stringify(creds)),
+        status: "CONNECTED",
+        lastSyncError: null,
+      },
+    });
   });
 }
 
@@ -89,6 +127,21 @@ export async function syncAdAccount(
     where: { id: accountId },
   });
   if (account.provider === "MANUAL") return { days: 0 };
+  const { plan } = await storeEntitlements(account.storeId);
+  const allowed =
+    plan.adAccounts > 0
+      ? await prisma.adAccount.findMany({
+          where: {
+            storeId: account.storeId,
+            provider: { not: "MANUAL" },
+            status: { not: "DISCONNECTED" },
+          },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          take: plan.adAccounts,
+          select: { id: true },
+        })
+      : [];
+  if (!allowed.some((a) => a.id === accountId)) return { days: 0 };
   const provider = providerFor(account.provider);
   let creds = readCredentials(account);
   if (!creds) {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { requirePlanFeature } from "./billing.server";
 import prisma from "../db.server";
 import { toMinor } from "../lib/money";
 import { audit } from "./store.server";
@@ -355,6 +356,7 @@ export async function saveNotificationPrefs(
   storeId: string,
   form: z.infer<typeof notificationSchema>,
 ) {
+  if (form.weeklyDigest) await requirePlanFeature(storeId, "digest");
   await prisma.notificationPreference.upsert({
     where: { storeId },
     create: { storeId, ...form, email: form.email || null },

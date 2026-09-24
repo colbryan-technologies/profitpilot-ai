@@ -347,3 +347,19 @@ export async function reserveAskUsage(storeId: string) {
     });
   });
 }
+
+export type PaidFeature = "digest" | "csvExport";
+export async function requirePlanFeature(
+  storeId: string,
+  feature: PaidFeature,
+) {
+  const entitlement = await storeEntitlements(storeId);
+  if (!entitlement.plan[feature])
+    throw new Response(
+      feature === "digest"
+        ? "Weekly briefings require Starter or above. Manage your plan in Billing."
+        : "CSV exports require Starter or above. Manage your plan in Billing.",
+      { status: 403 },
+    );
+  return entitlement;
+}

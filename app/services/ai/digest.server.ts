@@ -1,3 +1,4 @@
+import { requirePlanFeature } from "../billing.server";
 import prisma from "../../db.server";
 import { logger } from "../../lib/logger.server";
 import { previousPeriod, resolvePeriod } from "../../lib/dates";
@@ -42,6 +43,7 @@ export function deterministicDigest(g: GroundingPack): string {
 export async function generateWeeklyDigest(
   storeId: string,
 ): Promise<{ id: string; summary: string }> {
+  await requirePlanFeature(storeId, "digest");
   const store = await prisma.store.findUniqueOrThrow({
     where: { id: storeId },
     select: { ianaTimezone: true, aiEnabled: true },
@@ -159,6 +161,7 @@ export async function runDueDigests(now = new Date()): Promise<number> {
       await generateWeeklyDigest(s.id);
       n++;
     } catch (err) {
+      if (err instanceof Response && err.status === 403) continue;
       logger.error(
         { storeId: s.id, err: (err as Error).message },
         "digest generation failed",
