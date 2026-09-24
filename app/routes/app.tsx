@@ -40,6 +40,7 @@ export default function App() {
         <s-link href="/app/ask">Ask ProfitPilot</s-link>
         <s-link href="/app/data-health">Data health</s-link>
         <s-link href="/app/settings">Settings</s-link>
+        <s-link href="/app/privacy">Privacy requests</s-link>
         <s-link href="/app/billing">Billing</s-link>
         <s-link href="/app/help">Help</s-link>
       </s-app-nav>

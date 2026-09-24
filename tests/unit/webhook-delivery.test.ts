@@ -52,6 +52,19 @@ describe("durable webhook delivery", () => {
       }),
     ).toEqual({ id: 123, customer: { id: 456 } });
   });
+  it("keeps requested order IDs for a privacy request without retaining customer contact details", () => {
+    expect(
+      minimalWebhookPayload({
+        customer: { id: 456, email: "private@example.com", phone: "private" },
+        data_request: { id: 123 },
+        orders_requested: [42, "43"],
+      }),
+    ).toEqual({
+      customer: { id: 456 },
+      data_request: { id: 123 },
+      orders_requested: [42, "43"],
+    });
+  });
   it("recovers a persisted event after initial queue delivery fails", async () => {
     mocks.create
       .mockResolvedValueOnce({ id: "event-1" })

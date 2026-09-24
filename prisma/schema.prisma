@@ -117,6 +117,7 @@ model Store {
   products           Product[]
   variants           Variant[]
   orders             Order[]
+  privacyRequests    PrivacyRequest[]
   lineItems          LineItem[]
   refunds            Refund[]
   transactions       Transaction[]
@@ -781,6 +782,28 @@ enum SyncJobStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+enum PrivacyRequestStatus {
+  PENDING
+  FULFILLED
+  REDACTED
+}
+
+model PrivacyRequest {
+  id                       String @id @default(cuid())
+  storeId                  String
+  requestId                String
+  customerShopifyId        String?
+  requestedOrderShopifyIds String[] @default([])
+  status                   PrivacyRequestStatus @default(PENDING)
+  receivedAt               DateTime @default(now())
+  dueAt                    DateTime
+  fulfilledAt              DateTime?
+  store                    Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, requestId])
+  @@index([storeId, status, dueAt])
 }
 
 model WebhookEvent {

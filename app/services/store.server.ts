@@ -116,20 +116,21 @@ export async function redactStore(shopDomain: string): Promise<boolean> {
     where: { shopDomain: domain },
     include: { organization: { include: { stores: true } } },
   });
-  if (!store) return false;
   await prisma.$transaction(async (tx) => {
     await tx.webhookEvent.updateMany({
       where: { shopDomain: domain },
       data: { payload: {}, shopDomain: "[redacted]", lastError: null },
     });
-    await tx.auditEvent.deleteMany({ where: { storeId: store.id } });
-    await tx.store.delete({ where: { id: store.id } }); // cascades to all tenant tables
-    if (store.organization.stores.length === 1) {
-      await tx.organization.delete({ where: { id: store.organizationId } });
+    if (store) {
+      await tx.auditEvent.deleteMany({ where: { storeId: store.id } });
+      await tx.store.delete({ where: { id: store.id } }); // cascades to tenant tables, including privacy requests
+      if (store.organization.stores.length === 1) {
+        await tx.organization.delete({ where: { id: store.organizationId } });
+      }
     }
     await tx.session.deleteMany({ where: { shop: domain } });
   });
-  return true;
+  return Boolean(store);
 }
 
 /** Remove customer identifiers (customers/redact). Orders remain as anonymous financial records. */
@@ -138,17 +139,33 @@ export async function redactCustomer(
   customerShopifyIds: string[],
   orderShopifyIds: string[],
 ): Promise<number> {
-  const result = await prisma.order.updateMany({
-    where: {
-      storeId,
-      OR: [
-        { customerShopifyId: { in: customerShopifyIds } },
-        { shopifyId: { in: orderShopifyIds } },
-      ],
-    },
-    data: { customerShopifyId: null, customerEmailHash: null },
+  return prisma.$transaction(async (tx) => {
+    await tx.privacyRequest.updateMany({
+      where: {
+        storeId,
+        OR: [
+          { customerShopifyId: { in: customerShopifyIds } },
+          { requestedOrderShopifyIds: { hasSome: orderShopifyIds } },
+        ],
+      },
+      data: {
+        customerShopifyId: null,
+        requestedOrderShopifyIds: [],
+        status: "REDACTED",
+      },
+    });
+    const result = await tx.order.updateMany({
+      where: {
+        storeId,
+        OR: [
+          { customerShopifyId: { in: customerShopifyIds } },
+          { shopifyId: { in: orderShopifyIds } },
+        ],
+      },
+      data: { customerShopifyId: null, customerEmailHash: null },
+    });
+    return result.count;
   });
-  return result.count;
 }
 
 export async function audit(params: {

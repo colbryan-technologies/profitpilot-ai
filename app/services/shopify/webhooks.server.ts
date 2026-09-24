@@ -7,6 +7,7 @@ import {
   scheduleDebouncedRecalc,
 } from "../jobs/queue.server";
 import { gid } from "./mappers";
+import { recordPrivacyRequest } from "../privacy.server";
 import { deleteOrder, softDeleteProduct } from "./persist.server";
 import { syncSingleOrder, syncSingleProduct } from "./sync.server";
 import {
@@ -41,6 +42,9 @@ export function minimalWebhookPayload(
       data_request: request ? { id: id(request.id) } : undefined,
       orders_to_redact: Array.isArray(p.orders_to_redact)
         ? p.orders_to_redact.map(id).filter((x) => x !== undefined)
+        : undefined,
+      orders_requested: Array.isArray(p.orders_requested)
+        ? p.orders_requested.map(id).filter((x) => x !== undefined)
         : undefined,
       current: Array.isArray(p.current)
         ? p.current.filter((x) => typeof x === "string")
@@ -123,6 +127,7 @@ export async function processWebhookEvent(
       event.shopDomain,
       event.storeId,
       event.payload as Payload,
+      event.receivedAt,
     );
     await prisma.webhookEvent.update({
       where: { id: event.id },
@@ -154,6 +159,7 @@ async function dispatch(
   shopDomain: string,
   storeId: string | null,
   payload: Payload,
+  receivedAt: Date,
 ): Promise<"PROCESSED" | "IGNORED"> {
   switch (topic) {
     case "APP_UNINSTALLED": {
@@ -195,16 +201,8 @@ async function dispatch(
       return "PROCESSED";
     }
     case "CUSTOMERS_DATA_REQUEST": {
-      // We store no personal customer data beyond Shopify IDs; log for the merchant's records.
-      await audit({
-        storeId,
-        actorType: "webhook",
-        action: "gdpr.customers_data_request",
-        metadata: {
-          dataRequestId:
-            (payload.data_request as { id?: number } | undefined)?.id ?? null,
-        },
-      });
+      if (!storeId) return "IGNORED";
+      await recordPrivacyRequest(storeId, payload, receivedAt);
       return "PROCESSED";
     }
   }
