@@ -10,12 +10,15 @@ Extends the earlier [implementation checkpoint](2026-09-24-implementation.md).
 - Include shipping refund tax in persisted refund totals; correctly calculate remaining shipping revenue under inclusive/exclusive prices and both configured tax treatments. Calculation version is now `2026.09.3`.
 - Add PostgreSQL to CI, deploy all migrations to an isolated database, and test tenant-scoped persistence, customer redaction and store deletion with synthetic records. Local database tests remain opt-in: `RUN_INTEGRATION_TESTS=1` and a loopback `profitpilot_test` database are required.
 - Remove seven upstream template workflows for Shopify CLA, Slack/gardener automation, issue housekeeping and JavaScript branch conversion. Retain the application's validation workflow.
+- Bound merchant form request bodies while streaming, reject unsupported encodings, and test oversized bodies even when Content-Length is missing or misleading.
 
 ## Upgrade and verification
 
 Existing stores need a full historical order/product re-sync followed by recalculation. Recalculation alone cannot recover omitted records or previously unrecorded shipping refund taxes. This checkpoint has not performed a live merchant re-sync.
 
 Ten GraphQL documents pass the Shopify AI Toolkit validator against the configured `2025-10` schema. Unit tests cover connection paging, refund paging, parent changes, invalid cursors, bulk streaming and tax cases. CI exercises real PostgreSQL migrations and persistence; see the branch's Actions run for its actual result.
+
+[CI run 36021201492](https://github.com/colbryan-technologies/profitpilot-ai/actions/runs/36021201492) passed at `bd4c544`: all three migrations deployed to PostgreSQL, 83 unit tests plus three database tests passed, lint/typecheck and web/worker builds passed. Request-body tests were added subsequently and are checked by the next run.
 
 Live Shopify cost/throttle behavior, large-store performance, Redis recovery and full merchant browser journeys remain unverified. Gift-card liability treatment, duties, order edits, manual refund adjustments, privacy request fulfillment, rate limits, billing enforcement and the dependency advisory remain release blockers. This is not approval to deploy or charge merchants.
 

@@ -3,9 +3,32 @@ import { ZodError } from "zod";
 import { logger } from "../lib/logger.server";
 
 export async function formData(request: Request) {
-  const body = await request.text();
-  if (body.length > 2_000_000)
+  const limit = 2_000_000;
+  if (
+    request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !==
+    "application/x-www-form-urlencoded"
+  )
+    throw new Response("Unsupported form encoding", { status: 415 });
+  if (Number(request.headers.get("content-length")) > limit)
     throw new Response("Form too large", { status: 413 });
+  if (!request.body) return {};
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let body = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > limit) throw new Response("Form too large", { status: 413 });
+      body += decoder.decode(value, { stream: true });
+    }
+    body += decoder.decode();
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
   return Object.fromEntries(new URLSearchParams(body));
 }
 export async function formResult(work: () => Promise<string>) {

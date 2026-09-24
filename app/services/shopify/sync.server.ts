@@ -211,8 +211,8 @@ export async function syncOrdersPaginated(
 
 /**
  * Historical sync via Bulk Operations. Shopify runs the query asynchronously
- * and returns a JSONL file. Because nested connections are flattened into
- * separate lines (with `__parentId`), we re-assemble orders before mapping.
+ * and returns an identity-only JSONL file. Each order is then fetched with
+ * complete nested paging before mapping and persistence.
  *
  * Returns null if a bulk operation could not be started (e.g. another
  * operation is already running for this app on the shop), so the caller can
