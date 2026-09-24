@@ -1,16 +1,33 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+} from "node:crypto";
 import { env } from "./env.server";
 
 const ALGO = "aes-256-gcm";
 
+/** Stable, tenant-scoped suppression token; never store the erased Shopify ID. */
+export function erasureHash(storeId: string, shopifyId: string): string {
+  return createHmac("sha256", key())
+    .update(JSON.stringify(["profitpilot-erasure-v1", storeId, shopifyId]))
+    .digest("hex");
+}
+
 function key(): Buffer {
   const raw = env().ENCRYPTION_KEY;
   if (!raw) {
-    if (env().NODE_ENV === "production") throw new Error("ENCRYPTION_KEY is required");
+    if (env().NODE_ENV === "production")
+      throw new Error("ENCRYPTION_KEY is required");
     return createHash("sha256").update("profitpilot-dev-only-key").digest();
   }
-  const buf = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, "hex") : Buffer.from(raw, "base64");
-  if (buf.length !== 32) throw new Error("ENCRYPTION_KEY must decode to 32 bytes");
+  const buf = /^[0-9a-fA-F]{64}$/.test(raw)
+    ? Buffer.from(raw, "hex")
+    : Buffer.from(raw, "base64");
+  if (buf.length !== 32)
+    throw new Error("ENCRYPTION_KEY must decode to 32 bytes");
   return buf;
 }
 
@@ -20,15 +37,24 @@ export function encrypt(plaintext: string): string {
   const cipher = createCipheriv(ALGO, key(), iv);
   const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return ["v1", iv.toString("base64url"), tag.toString("base64url"), ct.toString("base64url")].join(":");
+  return [
+    "v1",
+    iv.toString("base64url"),
+    tag.toString("base64url"),
+    ct.toString("base64url"),
+  ].join(":");
 }
 
 export function decrypt(payload: string): string {
   const [version, iv, tag, ct] = payload.split(":");
-  if (version !== "v1" || !iv || !tag || !ct) throw new Error("Malformed encrypted payload");
+  if (version !== "v1" || !iv || !tag || !ct)
+    throw new Error("Malformed encrypted payload");
   const decipher = createDecipheriv(ALGO, key(), Buffer.from(iv, "base64url"));
   decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+  return Buffer.concat([
+    decipher.update(Buffer.from(ct, "base64url")),
+    decipher.final(),
+  ]).toString("utf8");
 }
 
 export function sha256Hex(input: string): string {

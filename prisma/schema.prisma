@@ -118,6 +118,7 @@ model Store {
   variants           Variant[]
   orders             Order[]
   privacyRequests    PrivacyRequest[]
+  erasureMarkers     ErasureMarker[]
   lineItems          LineItem[]
   refunds            Refund[]
   transactions       Transaction[]
@@ -788,6 +789,15 @@ enum PrivacyRequestStatus {
   PENDING
   FULFILLED
   REDACTED
+}
+
+model ErasureMarker {
+  storeId String
+  subjectHash String
+  createdAt DateTime @default(now())
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([storeId, subjectHash])
 }
 
 model PrivacyRequest {

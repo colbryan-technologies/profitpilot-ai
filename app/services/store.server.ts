@@ -1,6 +1,8 @@
 import type { Store } from "@prisma/client";
 import prisma from "../db.server";
 import { logger } from "../lib/logger.server";
+import { erasureHash } from "../lib/crypto.server";
+import { lockStore } from "./erasure.server";
 
 /**
  * Tenant boundary. Every data access in the app goes through a `storeId`
@@ -133,19 +135,51 @@ export async function redactStore(shopDomain: string): Promise<boolean> {
   return Boolean(store);
 }
 
-/** Remove customer identifiers (customers/redact). Orders remain as anonymous financial records. */
+/** Erase linked order records and prevent subsequent imports from restoring them. */
 export async function redactCustomer(
   storeId: string,
   customerShopifyIds: string[],
   orderShopifyIds: string[],
 ): Promise<number> {
   return prisma.$transaction(async (tx) => {
+    const store = await lockStore(tx, storeId);
+    if (!store) return 0;
+    const where = {
+      storeId,
+      OR: [
+        { customerShopifyId: { in: customerShopifyIds } },
+        { shopifyId: { in: orderShopifyIds } },
+      ],
+    };
+    const orders = await tx.order.findMany({
+      where,
+      select: { id: true, shopifyId: true },
+    });
+    const subjects = [
+      ...new Set([
+        ...customerShopifyIds,
+        ...orderShopifyIds,
+        ...orders.map((o) => o.shopifyId),
+      ]),
+    ];
+    if (subjects.length)
+      await tx.erasureMarker.createMany({
+        data: subjects.map((id) => ({
+          storeId,
+          subjectHash: erasureHash(storeId, id),
+        })),
+        skipDuplicates: true,
+      });
     await tx.privacyRequest.updateMany({
       where: {
         storeId,
         OR: [
           { customerShopifyId: { in: customerShopifyIds } },
-          { requestedOrderShopifyIds: { hasSome: orderShopifyIds } },
+          {
+            requestedOrderShopifyIds: {
+              hasSome: [...orderShopifyIds, ...orders.map((o) => o.shopifyId)],
+            },
+          },
         ],
       },
       data: {
@@ -154,16 +188,20 @@ export async function redactCustomer(
         status: "REDACTED",
       },
     });
-    const result = await tx.order.updateMany({
-      where: {
-        storeId,
-        OR: [
-          { customerShopifyId: { in: customerShopifyIds } },
-          { shopifyId: { in: orderShopifyIds } },
-        ],
-      },
-      data: { customerShopifyId: null, customerEmailHash: null },
-    });
+    const result = await tx.order.deleteMany({ where });
+    if (result.count) {
+      await tx.profitLeak.deleteMany({
+        where: {
+          storeId,
+          entityId: { in: orders.flatMap((o) => [o.id, o.shopifyId]) },
+        },
+      });
+      await tx.profitSnapshot.deleteMany({ where: { storeId } });
+      if (store.status === "ACTIVE")
+        await tx.syncJob.create({
+          data: { storeId, type: "RECALCULATE", paramsJson: { since: null } },
+        });
+    }
     return result.count;
   });
 }

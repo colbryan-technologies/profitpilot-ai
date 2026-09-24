@@ -115,13 +115,12 @@ describe.skipIf(!enabled)("PostgreSQL tenant persistence and redaction", () => {
   });
   it("scopes customer redaction to the requested tenant", async () => {
     await redactCustomer(stores[0].id, ["gid://shopify/Customer/1"], []);
+    expect(await prisma.order.count({ where: { storeId: stores[0].id } })).toBe(
+      0,
+    );
     expect(
-      (
-        await prisma.order.findFirstOrThrow({
-          where: { storeId: stores[0].id },
-        })
-      ).customerShopifyId,
-    ).toBeNull();
+      await prisma.lineItem.count({ where: { storeId: stores[0].id } }),
+    ).toBe(0);
     expect(
       (
         await prisma.order.findFirstOrThrow({
@@ -129,6 +128,64 @@ describe.skipIf(!enabled)("PostgreSQL tenant persistence and redaction", () => {
         })
       ).customerShopifyId,
     ).toBe("gid://shopify/Customer/1");
+  });
+  it("blocks replay, force import and customer-less replay of an erased order", async () => {
+    expect(
+      await upsertOrder(stores[0].id, mapped("Replay"), { force: true }),
+    ).toEqual({ orderId: null, changed: false });
+    const withoutCustomer = mapped("Replay without customer");
+    withoutCustomer.order.customerShopifyId = null;
+    expect((await upsertOrder(stores[0].id, withoutCustomer)).changed).toBe(
+      false,
+    );
+    const newOrder = mapped("New ID for erased customer");
+    newOrder.order.shopifyId = "gid://shopify/Order/99";
+    expect((await upsertOrder(stores[0].id, newOrder)).changed).toBe(false);
+    expect(
+      await prisma.erasureMarker.count({ where: { storeId: stores[0].id } }),
+    ).toBe(2);
+    expect(
+      await prisma.syncJob.count({
+        where: { storeId: stores[0].id, type: "RECALCULATE", status: "QUEUED" },
+      }),
+    ).toBe(1);
+    expect(
+      await redactCustomer(stores[0].id, ["gid://shopify/Customer/1"], []),
+    ).toBe(0);
+  });
+  it("serializes concurrent ingestion and erasure without restoring deleted data", async () => {
+    const incoming = mapped("Concurrent");
+    incoming.order.shopifyId = "gid://shopify/Order/77";
+    incoming.order.customerShopifyId = "gid://shopify/Customer/77";
+    incoming.lineItems[0].shopifyId = "gid://shopify/LineItem/77";
+    await Promise.all([
+      upsertOrder(stores[0].id, incoming),
+      redactCustomer(
+        stores[0].id,
+        ["gid://shopify/Customer/77"],
+        [incoming.order.shopifyId],
+      ),
+    ]);
+    expect(
+      await prisma.order.count({
+        where: { storeId: stores[0].id, shopifyId: incoming.order.shopifyId },
+      }),
+    ).toBe(0);
+    expect((await upsertOrder(stores[0].id, incoming)).changed).toBe(false);
+  });
+  it("order-only erasure does not suppress unrelated orders for the same customer", async () => {
+    const erased = mapped("Order-only");
+    erased.order.shopifyId = "gid://shopify/Order/88";
+    erased.order.customerShopifyId = "gid://shopify/Customer/88";
+    erased.lineItems[0].shopifyId = "gid://shopify/LineItem/88";
+    await upsertOrder(stores[0].id, erased);
+    await redactCustomer(stores[0].id, [], [erased.order.shopifyId]);
+    expect((await upsertOrder(stores[0].id, erased)).changed).toBe(false);
+    const retained = mapped("Other order");
+    retained.order.shopifyId = "gid://shopify/Order/89";
+    retained.order.customerShopifyId = erased.order.customerShopifyId;
+    retained.lineItems[0].shopifyId = "gid://shopify/LineItem/89";
+    expect((await upsertOrder(stores[0].id, retained)).changed).toBe(true);
   });
   it("deletes tenant data and sessions, scrubs webhook payloads, and preserves the other store", async () => {
     await prisma.webhookEvent.create({
