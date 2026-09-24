@@ -1,0 +1,56 @@
+# ProfitPilot AI — Shopify app configuration.
+# Run `shopify app config link` to populate client_id / application_url for your app.
+client_id = ""
+name = "ProfitPilot AI"
+handle = "profitpilot-ai"
+application_url = "https://example.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+
+[access_scopes]
+# Minimum scopes required for profitability intelligence:
+#   read_orders                  – orders, line items, refunds, transactions & fees
+#   read_all_orders              – orders older than 60 days (historical import; requires approval)
+#   read_products                – products, variants, inventory item unit cost
+#   read_inventory               – inventory item unit cost (COGS from Shopify)
+#   read_shipping                – shipping rates for cost estimates
+#   read_locales                 – store locale for formatting
+scopes = "read_orders,read_all_orders,read_products,read_inventory,read_shipping,read_locales"
+
+[auth]
+redirect_urls = ["https://example.com/auth/callback", "https://example.com/auth/shopify/callback", "https://example.com/api/auth/callback"]
+
+[webhooks]
+api_version = "2025-10"
+
+  # All topics are received by /app/routes/webhooks.$.tsx, persisted, and processed by the worker.
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled", "app/scopes_update", "shop/update"]
+  uri = "/webhooks/app"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "orders/edited", "orders/delete"]
+  uri = "/webhooks/orders"
+
+  [[webhooks.subscriptions]]
+  topics = ["refunds/create"]
+  uri = "/webhooks/refunds"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/create", "products/update", "products/delete"]
+  uri = "/webhooks/products"
+
+  [[webhooks.subscriptions]]
+  topics = ["app_subscriptions/update"]
+  uri = "/webhooks/billing"
+
+  # Mandatory compliance topics (public apps)
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "/webhooks/compliance"
+
+[pos]
+embedded = false

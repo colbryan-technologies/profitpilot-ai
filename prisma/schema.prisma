@@ -1,0 +1,874 @@
+// ProfitPilot AI — database schema
+// See docs/architecture/database.md for design notes.
+//
+// Conventions
+// - All monetary amounts are stored as integers in the *minor unit* of the
+//   named currency (cents, pence, kobo). Never floats. See app/lib/money.
+// - Every tenant-scoped table carries `storeId` and is only ever queried through
+//   the tenant-scoped repository helpers in app/services/tenant.server.ts.
+// - Shopify GIDs are stored as strings (`gid://shopify/Order/123`).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Shopify session storage (required by @shopify/shopify-app-session-storage-prisma)
+// ---------------------------------------------------------------------------
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+/// An organization groups one or more Shopify stores under a single owner.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stores Store[]
+  users  OrganizationMember[]
+}
+
+/// A Shopify staff user known to ProfitPilot (from online sessions).
+model User {
+  id            String   @id @default(cuid())
+  shopifyUserId BigInt?  @unique
+  email         String?
+  firstName     String?
+  lastName      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships OrganizationMember[]
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           MemberRole @default(OWNER)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  VIEWER
+}
+
+/// One installed Shopify store. This is the tenant boundary.
+model Store {
+  id             String   @id @default(cuid())
+  organizationId String
+  shopDomain     String   @unique // example.myshopify.com
+  shopifyShopId  BigInt?
+  name           String?
+  email          String?
+  currency       String   @default("USD") // shop presentment/base currency (ISO 4217)
+  ianaTimezone   String   @default("UTC")
+  countryCode    String?
+  planName       String?  // Shopify plan (basic, shopify, advanced, plus)
+  installedAt    DateTime @default(now())
+  uninstalledAt  DateTime?
+  status         StoreStatus @default(ACTIVE)
+  onboardingStep String   @default("welcome")
+  onboardingCompletedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  installations      Installation[]
+  products           Product[]
+  variants           Variant[]
+  orders             Order[]
+  lineItems          LineItem[]
+  refunds            Refund[]
+  transactions       Transaction[]
+  cogsHistory        CogsHistory[]
+  adAccounts         AdAccount[]
+  adSpend            AdSpend[]
+  expenses           Expense[]
+  taxConfig          TaxConfig?
+  feeConfig          FeeConfig?
+  profitSnapshots    ProfitSnapshot[]
+  profitLeaks        ProfitLeak[]
+  aiConversations    AiConversation[]
+  aiUsage            AiUsage[]
+  syncJobs           SyncJob[]
+  webhookEvents      WebhookEvent[]
+  notificationPref   NotificationPreference?
+  subscription       Subscription?
+  auditEvents        AuditEvent[]
+  digests            IntelligenceDigest[]
+  shippingCosts      ShippingCostRule[]
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+enum StoreStatus {
+  ACTIVE
+  UNINSTALLED
+  SUSPENDED
+  PENDING_REDACTION
+}
+
+/// Every install / reinstall of the app on a store.
+model Installation {
+  id             String    @id @default(cuid())
+  storeId        String
+  installedAt    DateTime  @default(now())
+  uninstalledAt  DateTime?
+  grantedScopes  String
+  apiVersion     String
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Product {
+  id          String   @id @default(cuid())
+  storeId     String
+  shopifyId   String   // gid://shopify/Product/…
+  title       String
+  handle      String?
+  vendor      String?
+  productType String?
+  status      String?  // ACTIVE / ARCHIVED / DRAFT
+  imageUrl    String?
+  shopifyCreatedAt DateTime?
+  shopifyUpdatedAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  variants Variant[]
+  lineItems LineItem[]
+
+  @@unique([storeId, shopifyId])
+  @@index([storeId, title])
+}
+
+model Variant {
+  id        String   @id @default(cuid())
+  storeId   String
+  productId String
+  shopifyId String   // gid://shopify/ProductVariant/…
+  title     String?
+  sku       String?
+  barcode   String?
+  priceMinor Int?    // current list price, minor units, store currency
+  inventoryItemId String?
+  /// Shopify's own inventory item unit cost (if merchant maintains it in Shopify)
+  shopifyUnitCostMinor Int?
+  shopifyUnitCostCurrency String?
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cogs    CogsHistory[]
+  lineItems LineItem[]
+
+  @@unique([storeId, shopifyId])
+  @@index([storeId, sku])
+  @@index([productId])
+}
+
+/// Effective-dated cost of goods for a variant. A variant's cost for an order is
+/// the most recent record whose effectiveFrom <= order.processedAt.
+model CogsHistory {
+  id            String   @id @default(cuid())
+  storeId       String
+  variantId     String
+  unitCostMinor Int
+  currency      String
+  effectiveFrom DateTime
+  source        CogsSource @default(MANUAL)
+  note          String?
+  createdAt     DateTime @default(now())
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, effectiveFrom])
+  @@index([storeId, variantId, effectiveFrom(sort: Desc)])
+}
+
+enum CogsSource {
+  MANUAL
+  CSV_IMPORT
+  SHOPIFY_INVENTORY
+  BULK_EDIT
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
+model Order {
+  id                    String    @id @default(cuid())
+  storeId               String
+  shopifyId             String    // gid://shopify/Order/…
+  name                  String    // #1001
+  orderNumber           Int?
+  processedAt           DateTime
+  shopifyCreatedAt      DateTime
+  shopifyUpdatedAt      DateTime
+  cancelledAt           DateTime?
+  closedAt              DateTime?
+  financialStatus       String?
+  fulfillmentStatus     String?
+  currency              String    // order currency (shop money)
+  presentmentCurrency   String?
+  customerShopifyId     String?
+  customerEmailHash     String?   // sha256 of lowercased email; raw email is never stored
+  isTest                Boolean   @default(false)
+  sourceName            String?
+  shippingCountryCode   String?
+  tags                  String[]  @default([])
+
+  // Money — all minor units in `currency`
+  subtotalMinor         Int       // sum(line price * qty) before discounts
+  totalDiscountsMinor   Int
+  totalShippingMinor    Int       // shipping charged to customer
+  totalTaxMinor         Int
+  totalTipMinor         Int       @default(0)
+  totalDutiesMinor      Int       @default(0)
+  totalPriceMinor       Int       // customer-facing total
+  totalRefundedMinor    Int       @default(0)
+  taxesIncluded         Boolean   @default(false)
+
+  // Derived and cached (recomputed by the profit engine)
+  computedAt            DateTime?
+  cogsMinor             Int?
+  cogsCoverage          Int?      // 0-100: % of line-item quantity with known COGS
+  paymentFeesMinor      Int?
+  shippingCostMinor     Int?
+  shippingCostSource    String?   // ACTUAL | RULE | UNKNOWN
+  contributionProfitMinor Int?
+  calcVersion           String?
+
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  lineItems    LineItem[]
+  refunds      Refund[]
+  transactions Transaction[]
+
+  @@unique([storeId, shopifyId])
+  @@index([storeId, processedAt])
+  @@index([storeId, shopifyUpdatedAt])
+  @@index([storeId, customerShopifyId])
+}
+
+model LineItem {
+  id                 String  @id @default(cuid())
+  storeId            String
+  orderId            String
+  shopifyId          String
+  productId          String?
+  variantId          String?
+  shopifyProductId   String?
+  shopifyVariantId   String?
+  title              String
+  variantTitle       String?
+  sku                String?
+  quantity           Int
+  currentQuantity    Int     // after refunds/removals
+  unitPriceMinor     Int     // original unit price before discounts
+  discountMinor      Int     @default(0) // total allocated discount for the line
+  taxMinor           Int     @default(0)
+  requiresShipping   Boolean @default(true)
+  isGiftCard         Boolean @default(false)
+
+  // Derived
+  unitCogsMinor      Int?
+  cogsSource         String? // HISTORY | CURRENT | SHOPIFY | MISSING
+
+  store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant Variant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@unique([storeId, shopifyId])
+  @@index([orderId])
+  @@index([storeId, variantId])
+  @@index([storeId, productId])
+}
+
+model Refund {
+  id                 String   @id @default(cuid())
+  storeId            String
+  orderId            String
+  shopifyId          String
+  processedAt        DateTime
+  note               String?
+  currency           String
+  totalRefundedMinor Int      // total amount returned to customer
+  shippingRefundMinor Int     @default(0)
+  taxRefundMinor     Int      @default(0)
+  lineItemsJson      Json     // [{ lineItemShopifyId, quantity, subtotalMinor, restockType }]
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, shopifyId])
+  @@index([storeId, processedAt])
+  @@index([orderId])
+}
+
+model Transaction {
+  id            String   @id @default(cuid())
+  storeId       String
+  orderId       String
+  shopifyId     String
+  kind          String   // SALE, CAPTURE, REFUND, AUTHORIZATION, VOID
+  status        String   // SUCCESS, FAILURE, PENDING, ERROR
+  gateway       String?
+  processedAt   DateTime
+  currency      String
+  amountMinor   Int
+  /// Shopify Payments fee if exposed by the API; null when unavailable.
+  feeMinor      Int?
+  feeCurrency   String?
+  isTest        Boolean  @default(false)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, shopifyId])
+  @@index([orderId])
+  @@index([storeId, processedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Costs & configuration
+// ---------------------------------------------------------------------------
+
+/// Merchant-configured payment processing fee assumptions. Used when Shopify
+/// does not expose the actual transaction fee.
+model FeeConfig {
+  id                 String  @id @default(cuid())
+  storeId            String  @unique
+  /// e.g. 290 = 2.90%  (basis points)
+  percentBps         Int     @default(290)
+  fixedMinor         Int     @default(30)
+  /// per-gateway overrides: { "paypal": { percentBps, fixedMinor } }
+  gatewayOverrides   Json    @default("{}")
+  confirmedAt        DateTime?
+  updatedAt          DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+/// Merchant-configured shipping cost estimation rules, used when the real
+/// carrier cost is not available.
+model ShippingCostRule {
+  id           String  @id @default(cuid())
+  storeId      String
+  name         String
+  countryCode  String? // null = default
+  flatMinor    Int     @default(0)
+  perItemMinor Int     @default(0)
+  percentBps   Int     @default(0) // % of shipping revenue
+  currency     String
+  priority     Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, priority])
+}
+
+model TaxConfig {
+  id        String  @id @default(cuid())
+  storeId   String  @unique
+  /// How the merchant wants tax treated in profit calculations.
+  treatment TaxTreatment @default(EXCLUDE_COLLECTED_TAX)
+  /// ISO country for presets (GB, IE, US, NG, DE, …). Informational only.
+  regionCode String?
+  /// Whether recorded expenses/COGS amounts already include VAT that is reclaimable.
+  cogsIncludesReclaimableTax Boolean @default(false)
+  /// Free text shown to merchant summarizing assumptions.
+  notes     String?
+  confirmedAt DateTime?
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+enum TaxTreatment {
+  /// Tax collected from customers is a pass-through liability; exclude from revenue and profit (default, correct for VAT/sales tax registered businesses).
+  EXCLUDE_COLLECTED_TAX
+  /// Treat tax collected as revenue and remitted tax as an expense line (rarely appropriate; for unregistered sellers).
+  INCLUDE_TAX_AS_REVENUE
+  /// Merchant has not confirmed tax treatment yet — Profit Confidence flags this.
+  UNCONFIGURED
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  storeId     String
+  name        String
+  category    ExpenseCategory @default(OTHER)
+  amountMinor Int
+  currency    String
+  recurrence  ExpenseRecurrence @default(ONE_TIME)
+  /// For one-time: the date incurred. For recurring: the start date.
+  startsOn    DateTime
+  endsOn      DateTime?
+  allocation  ExpenseAllocation @default(STORE)
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, startsOn])
+}
+
+enum ExpenseCategory {
+  SOFTWARE
+  WAREHOUSE
+  CONTRACTORS
+  PACKAGING
+  FULFILLMENT
+  PAYROLL
+  AGENCY
+  MARKETING_OTHER
+  OTHER
+}
+
+enum ExpenseRecurrence {
+  ONE_TIME
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum ExpenseAllocation {
+  /// Whole amount attributed to the store for the period.
+  STORE
+  /// Spread evenly across orders in the period (per-order allocation).
+  PER_ORDER
+}
+
+// ---------------------------------------------------------------------------
+// Advertising
+// ---------------------------------------------------------------------------
+
+model AdAccount {
+  id               String   @id @default(cuid())
+  storeId          String
+  provider         AdProvider
+  externalId       String
+  name             String?
+  currency         String
+  status           IntegrationStatus @default(CONNECTED)
+  /// Encrypted OAuth credentials (AES-256-GCM, see app/lib/crypto.server.ts)
+  credentialsEnc   String?
+  lastSyncedAt     DateTime?
+  lastSyncError    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  store Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  spend AdSpend[]
+
+  @@unique([storeId, provider, externalId])
+  @@index([storeId])
+}
+
+enum AdProvider {
+  META
+  GOOGLE
+  TIKTOK
+  MANUAL
+}
+
+enum IntegrationStatus {
+  CONNECTED
+  ERROR
+  EXPIRED
+  NEEDS_REAUTH
+  DISCONNECTED
+}
+
+/// Daily ad spend per account. `spendMinor` is total spend for the day (not attribution).
+model AdSpend {
+  id            String   @id @default(cuid())
+  storeId       String
+  adAccountId   String
+  date          DateTime @db.Date
+  currency      String
+  spendMinor    Int
+  impressions   Int?
+  clicks        Int?
+  /// Platform-reported attributed revenue — informational, never used for profit.
+  attributedRevenueMinor Int?
+  attributedConversions  Int?
+  syncedAt      DateTime @default(now())
+
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([adAccountId, date])
+  @@index([storeId, date])
+}
+
+// ---------------------------------------------------------------------------
+// Financial outputs
+// ---------------------------------------------------------------------------
+
+/// Precomputed daily aggregate for a store (in store currency). Rebuilt by the
+/// recalculation job; the dashboard reads these instead of recomputing orders.
+model ProfitSnapshot {
+  id                    String   @id @default(cuid())
+  storeId               String
+  date                  DateTime @db.Date
+  currency              String
+  orderCount            Int
+  grossSalesMinor       Int
+  discountsMinor        Int
+  refundsMinor          Int
+  netSalesMinor         Int
+  cogsMinor             Int
+  grossProfitMinor      Int
+  shippingRevenueMinor  Int
+  shippingCostMinor     Int
+  paymentFeesMinor      Int
+  adSpendMinor          Int
+  taxCollectedMinor     Int
+  otherExpensesMinor    Int
+  contributionProfitMinor Int
+  netProfitMinor        Int
+  /// Profit Confidence 0-100 and its component breakdown
+  confidenceScore       Int
+  confidenceJson        Json
+  calcVersion           String
+  computedAt            DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, date])
+  @@index([storeId, date(sort: Desc)])
+}
+
+model ProfitLeak {
+  id            String   @id @default(cuid())
+  storeId       String
+  type          LeakType
+  severity      LeakSeverity
+  status        LeakStatus @default(OPEN)
+  title         String
+  /// Structured deterministic evidence (numbers, comparisons, entity ids)
+  evidenceJson  Json
+  /// Optional AI-produced explanation, grounded only on evidenceJson
+  aiExplanation String?
+  entityType    String?  // product | variant | order | store | adAccount
+  entityId      String?
+  periodStart   DateTime
+  periodEnd     DateTime
+  impactMinor   Int?     // estimated profit impact, minor units, store currency
+  fingerprint   String   // stable hash to dedupe re-detections
+  detectedAt    DateTime @default(now())
+  resolvedAt    DateTime?
+  dismissedAt   DateTime?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, fingerprint])
+  @@index([storeId, status, severity])
+  @@index([storeId, detectedAt(sort: Desc)])
+}
+
+enum LeakType {
+  AD_SPEND_INCREASE
+  MARGIN_SHRINK
+  REFUND_RATE_HIGH
+  MISSING_COGS
+  SHIPPING_COST_INCREASE
+  DISCOUNT_INCREASE
+  PAYMENT_FEE_CHANGE
+  NEAR_BREAK_EVEN_PRODUCT
+  LOSS_MAKING_PRODUCT
+  LOW_MARGIN_ORDERS
+  EXPENSE_SPIKE
+  DATA_STALE
+}
+
+enum LeakSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum LeakStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// ---------------------------------------------------------------------------
+// AI
+// ---------------------------------------------------------------------------
+
+model AiConversation {
+  id        String   @id @default(cuid())
+  storeId   String
+  userId    String?
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store    Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+
+  @@index([storeId, updatedAt(sort: Desc)])
+}
+
+model AiMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           AiRole
+  content        String
+  /// Deterministic data context that was supplied to the model (for auditability)
+  groundingJson  Json?
+  /// References to dashboard routes the answer cites
+  referencesJson Json?
+  /// Numbers in the answer that failed validation against grounding (if any)
+  validationJson Json?
+  createdAt      DateTime @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+enum AiRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+model AiUsage {
+  id           String   @id @default(cuid())
+  storeId      String
+  feature      String   // ask | digest | leak_explanation
+  provider     String
+  model        String
+  inputTokens  Int
+  outputTokens Int
+  costMicros   Int      // USD micro-dollars
+  latencyMs    Int
+  success      Boolean
+  createdAt    DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, createdAt])
+}
+
+model IntelligenceDigest {
+  id          String   @id @default(cuid())
+  storeId     String
+  kind        DigestKind
+  periodStart DateTime
+  periodEnd   DateTime
+  /// Deterministic metrics + deltas the digest is built from
+  metricsJson Json
+  summary     String
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, kind, periodStart])
+  @@index([storeId, createdAt(sort: Desc)])
+}
+
+enum DigestKind {
+  DAILY
+  WEEKLY
+}
+
+// ---------------------------------------------------------------------------
+// Sync, webhooks, jobs
+// ---------------------------------------------------------------------------
+
+model SyncJob {
+  id           String    @id @default(cuid())
+  storeId      String
+  type         SyncJobType
+  status       SyncJobStatus @default(QUEUED)
+  cursor       String?   // resumable GraphQL cursor / bulk op id
+  progress     Int       @default(0) // 0-100
+  processed    Int       @default(0)
+  total        Int?
+  attempts     Int       @default(0)
+  lastError    String?
+  paramsJson   Json      @default("{}")
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, type, status])
+  @@index([status, updatedAt])
+}
+
+enum SyncJobType {
+  HISTORICAL_ORDERS
+  INCREMENTAL_ORDERS
+  PRODUCTS
+  AD_SPEND
+  RECALCULATE
+  DETECT_LEAKS
+  DIGEST
+  SHOP_INFO
+}
+
+enum SyncJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model WebhookEvent {
+  id            String   @id @default(cuid())
+  storeId       String?
+  shopDomain    String
+  /// X-Shopify-Webhook-Id — used for idempotency
+  webhookId     String   @unique
+  topic         String
+  apiVersion    String?
+  triggeredAt   DateTime?
+  payload       Json
+  status        WebhookStatus @default(RECEIVED)
+  attempts      Int      @default(0)
+  lastError     String?
+  processedAt   DateTime?
+  receivedAt    DateTime @default(now())
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([shopDomain, topic, receivedAt])
+  @@index([status, receivedAt])
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  DEAD_LETTER
+  IGNORED
+}
+
+// ---------------------------------------------------------------------------
+// Notifications, billing, audit
+// ---------------------------------------------------------------------------
+
+model NotificationPreference {
+  id             String  @id @default(cuid())
+  storeId        String  @unique
+  dailyDigest    Boolean @default(false)
+  weeklyDigest   Boolean @default(true)
+  leakAlerts     Boolean @default(true)
+  minLeakSeverity LeakSeverity @default(MEDIUM)
+  email          String?
+  /// Hour of day (0-23) in store timezone to deliver digests
+  deliveryHour   Int     @default(8)
+  updatedAt      DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+model Subscription {
+  id                    String   @id @default(cuid())
+  storeId               String   @unique
+  planKey               String   // free | starter | growth | pro | scale
+  shopifySubscriptionId String?  // gid://shopify/AppSubscription/…
+  status                SubscriptionStatus @default(ACTIVE)
+  isTest                Boolean  @default(false)
+  currentPeriodEnd      DateTime?
+  trialEndsAt           DateTime?
+  cancelledAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PENDING
+  CANCELLED
+  EXPIRED
+  FROZEN
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  storeId   String?
+  actorType String   // user | system | webhook | admin
+  actorId   String?
+  action    String   // e.g. cogs.import, settings.tax.update, billing.plan.change
+  targetType String?
+  targetId  String?
+  metadata  Json?
+  ipHash    String?
+  createdAt DateTime @default(now())
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt(sort: Desc)])
+  @@index([action])
+}
