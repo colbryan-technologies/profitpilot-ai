@@ -10,7 +10,7 @@ const serve = resolve(
 );
 for (const [name, args] of [
   ["worker", ["build/worker/index.js"]],
-  ["web", [serve, "build/server/index.js"]],
+  ["web", ["--import", "./scripts/web-shutdown.mjs", serve, "build/server/index.js"]],
 ]) {
   const result = spawnSync(process.execPath, args, {
     cwd: process.cwd(),
