@@ -4,6 +4,8 @@
   "main": "index.ts",
   "compatibility_date": "2026-09-24",
   "workers_dev": true,
+  "keep_vars": true,
+  "observability": { "enabled": true },
   "containers": [
     {
       "class_name": "ProfitPilotWeb",
