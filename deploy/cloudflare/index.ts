@@ -9,6 +9,20 @@ export class ProfitPilotWeb extends Container<Env> {
   defaultPort = 3000;
   sleepAfter = "10m";
   envVars = containerEnvironment(this.env);
+  override async fetch(request: Request): Promise<Response> {
+    // The SDK's default instance acquisition budget is only eight seconds.
+    // Wait for cold starts before forwarding, without replaying app mutations.
+    await this.startAndWaitForPorts({
+      ports: [this.defaultPort],
+      cancellationOptions: {
+        instanceGetTimeoutMS: 60_000,
+        portReadyTimeoutMS: 60_000,
+        waitInterval: 500,
+        abort: request.signal,
+      },
+    });
+    return this.containerFetch(request);
+  }
 }
 export class ProfitPilotJobs extends Container<Env> {
   sleepAfter = "10m";
