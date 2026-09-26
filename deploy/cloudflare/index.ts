@@ -1,6 +1,10 @@
 import { Container } from "@cloudflare/containers";
 import { containerEnvironment } from "./environment";
 import { failureCategory } from "../../app/lib/failure-category";
+import {
+  responseFailureSource,
+  RESPONSE_DIAGNOSTIC_HEADER,
+} from "../../app/lib/response-diagnostic";
 interface Env {
   WEB: DurableObjectNamespace<ProfitPilotWeb>;
   JOBS: DurableObjectNamespace<ProfitPilotJobs>;
@@ -25,14 +29,27 @@ export class ProfitPilotWeb extends Container<Env> {
           abort: request.signal,
         },
       });
+      const readyAt = Date.now();
       stage = "container_forward";
       const response = await this.containerFetch(request);
       if (response.status >= 500)
         console.error("profitpilot_diagnostic", {
           stage: "container_response",
+          source: responseFailureSource(response.headers),
           status: response.status,
+          startupMs: readyAt - started,
+          forwardMs: Date.now() - readyAt,
           elapsedMs: Date.now() - started,
         });
+      if (response.headers.has(RESPONSE_DIAGNOSTIC_HEADER)) {
+        const headers = new Headers(response.headers);
+        headers.delete(RESPONSE_DIAGNOSTIC_HEADER);
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        });
+      }
       return response;
     } catch (error) {
       console.error("profitpilot_diagnostic", {
