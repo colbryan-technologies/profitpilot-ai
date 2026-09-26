@@ -70,22 +70,74 @@ it("allows a cold connection longer than the command timeout and shares readines
 it("bounds stalled readiness, fails closed, and lets the next request create a fresh connection", async () => {
   const stalled = fakeRedis();
   stalled.connect.mockReturnValue(new Promise(() => {}));
+  const stalledRetry = fakeRedis();
+  stalledRetry.connect.mockReturnValue(new Promise(() => {}));
   const recovered = fakeRedis();
   recovered.connect.mockImplementation(async () => {
     recovered.status = "ready";
   });
-  mocks.create.mockReturnValueOnce(stalled).mockReturnValueOnce(recovered);
+  mocks.create
+    .mockReturnValueOnce(stalled)
+    .mockReturnValueOnce(stalledRetry)
+    .mockReturnValueOnce(recovered);
   const { consumeRateLimit } =
     await import("../../app/services/rate-limit.server");
   const rejected = expect(
     consumeRateLimit("a", "requests", 5, 60000),
   ).rejects.toMatchObject({ status: 503 });
-  await vi.advanceTimersByTimeAsync(10000);
+  await vi.advanceTimersByTimeAsync(10250);
   await rejected;
   expect(stalled.eval).not.toHaveBeenCalled();
   expect(stalled.disconnect).toHaveBeenCalledTimes(1);
+  expect(stalledRetry.disconnect).toHaveBeenCalledTimes(1);
+  expect(stalledRetry.eval).not.toHaveBeenCalled();
   await consumeRateLimit("a", "requests", 5, 60000);
   expect(recovered.eval).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("recovers one transient connection failure and shares the retry with concurrent requests", async () => {
+  const first = fakeRedis();
+  first.connect.mockImplementation(async () => {
+    first.status = "end";
+    throw new Error("Connection is closed.");
+  });
+  const second = fakeRedis();
+  second.connect.mockImplementation(async () => {
+    second.status = "ready";
+  });
+  mocks.create.mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const { consumeRateLimit } =
+    await import("../../app/services/rate-limit.server");
+  const a = consumeRateLimit("a", "requests", 5, 60000);
+  await vi.advanceTimersByTimeAsync(100);
+  const b = consumeRateLimit("b", "requests", 5, 60000);
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(150);
+  await Promise.all([a, b]);
+  expect(mocks.create).toHaveBeenCalledTimes(2);
+  expect(first.eval).not.toHaveBeenCalled();
+  expect(second.eval).toHaveBeenCalledTimes(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("preserves authentication errors from the connection event and does not retry them", async () => {
+  const redis = fakeRedis();
+  redis.connect.mockImplementation(async () => {
+    const handler = redis.on.mock.calls.find(
+      ([event]) => event === "error",
+    )![1];
+    handler(new Error("WRONGPASS private credentials"));
+    throw new Error("Connection is closed.");
+  });
+  mocks.create.mockReturnValue(redis);
+  const { consumeRateLimit } =
+    await import("../../app/services/rate-limit.server");
+  await expect(
+    consumeRateLimit("a", "requests", 5, 60000),
+  ).rejects.toMatchObject({ status: 503 });
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  expect(redis.eval).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
 

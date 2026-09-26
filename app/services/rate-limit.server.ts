@@ -4,26 +4,25 @@ import { env } from "../lib/env.server";
 import { logger } from "../lib/logger.server";
 import { failureCategory } from "../lib/failure-category";
 export type RateScope = "requests" | "mutations" | "sync" | "briefing";
-let connection: IORedis | null = null;
-let connectionReady: Promise<IORedis> | null = null;
+type ConnectionState = {
+  redis: IORedis | null;
+  pending: boolean;
+  ready: Promise<IORedis> | null;
+};
+let connection: ConnectionState | null = null;
 function discardConnection(redis: IORedis) {
-  if (connection === redis) {
+  if (connection?.redis === redis) {
     connection = null;
-    connectionReady = null;
   }
   redis.disconnect();
 }
-function client() {
-  if (
-    !connection ||
-    connection.status === "end" ||
-    connection.status === "close"
-  ) {
-    if (connection) discardConnection(connection);
+async function connectReady(state: ConnectionState): Promise<IORedis> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     const redis = new IORedis(env().REDIS_URL, {
       lazyConnect: true,
       connectTimeout: 5000,
-      commandTimeout: 2000,
+      // This also governs the client's internal AUTH/INFO handshake commands.
+      commandTimeout: 5000,
       // Admission must not run later from an offline queue or be replayed
       // after an ambiguous connection failure.
       enableOfflineQueue: false,
@@ -31,33 +30,70 @@ function client() {
       maxRetriesPerRequest: 0,
       retryStrategy: () => null,
     });
-    redis.on("error", () => logger.warn("request limiter unavailable"));
-    connection = redis;
-    // The two-second command timer starts when eval is called, even while
-    // connecting. Give DNS/TLS/auth readiness its own bounded budget and share
-    // that wait across concurrent loaders before issuing any admission command.
-    connectionReady = (async () => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          redis.connect(),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(
-              () => reject(new Error("Redis readiness timeout")),
-              10_000,
-            );
-          }),
-        ]);
-        return redis;
-      } catch (error) {
-        discardConnection(redis);
-        throw error;
-      } finally {
-        clearTimeout(timer);
-      }
-    })();
+    state.redis = redis;
+    let connectionError: unknown;
+    redis.on("error", (error) => {
+      connectionError = error;
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        redis.connect(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Redis readiness timeout")),
+            5000,
+          );
+        }),
+      ]);
+      return redis;
+    } catch (error) {
+      // Preserve the handshake error rather than the generic "connection
+      // closed" rejection, especially so authentication errors are not retried.
+      const cause = connectionError ?? error;
+      const category = failureCategory(cause);
+      redis.disconnect();
+      logger.warn(
+        { stage: "redis_connection_attempt", attempt, category },
+        "profitpilot_diagnostic",
+      );
+      if (
+        attempt === 2 ||
+        !["connection_unavailable", "timeout"].includes(category)
+      )
+        throw cause;
+    } finally {
+      clearTimeout(timer);
+    }
+    // No EVAL has been sent. One fresh connection attempt is safe; never
+    // retry an admission command whose execution could be ambiguous.
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  return connectionReady!;
+  throw new Error("Redis readiness attempts exhausted");
+}
+function client(): Promise<IORedis> {
+  // Keep sharing readiness during the retry delay, even if the first socket
+  // is already closed. Concurrent loaders must not start separate retries.
+  if (
+    connection &&
+    (connection.pending || connection.redis?.status === "ready")
+  )
+    return connection.ready!;
+  if (connection?.redis) discardConnection(connection.redis);
+  const state: ConnectionState = { redis: null, pending: true, ready: null };
+  connection = state;
+  state.ready = connectReady(state).then(
+    (redis) => {
+      state.pending = false;
+      return redis;
+    },
+    (error) => {
+      state.pending = false;
+      if (connection === state) connection = null;
+      throw error;
+    },
+  );
+  return state.ready;
 }
 export function rateKey(storeId: string, scope: RateScope) {
   return `profitpilot:limits:v1:${scope}:${createHash("sha256").update(storeId).digest("hex")}`;
