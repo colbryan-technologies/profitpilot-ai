@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import IORedis from "ioredis";
 import { env } from "../lib/env.server";
 import { logger } from "../lib/logger.server";
+import { failureCategory } from "../lib/failure-category";
 export type RateScope = "requests" | "mutations" | "sync" | "briefing";
 let connection: IORedis | null = null;
 function client() {
@@ -47,6 +48,7 @@ export async function consumeRateLimit(
   )
     throw new Error("Invalid rate limit policy");
   let result: unknown;
+  const started = Date.now();
   try {
     result = await redis.eval(
       SCRIPT,
@@ -55,7 +57,15 @@ export async function consumeRateLimit(
       limit,
       windowMs,
     );
-  } catch {
+  } catch (error) {
+    logger.error(
+      {
+        stage: "redis_rate_limit",
+        category: failureCategory(error),
+        elapsedMs: Date.now() - started,
+      },
+      "profitpilot_diagnostic",
+    );
     throw new Response(
       "Request protection is temporarily unavailable. Please try again shortly.",
       {
@@ -69,11 +79,20 @@ export async function consumeRateLimit(
     result.length !== 2 ||
     ![0, 1].includes(result[0]) ||
     !Number.isFinite(result[1])
-  )
+  ) {
+    logger.error(
+      {
+        stage: "redis_rate_limit",
+        category: "invalid_response",
+        elapsedMs: Date.now() - started,
+      },
+      "profitpilot_diagnostic",
+    );
     throw new Response("Request protection is temporarily unavailable.", {
       status: 503,
       headers: { "Retry-After": "30", "Cache-Control": "no-store" },
     });
+  }
   if (result[0] === 0) {
     const seconds = Math.max(1, Math.ceil(result[1] / 1000));
     throw new Response(
