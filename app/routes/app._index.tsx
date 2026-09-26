@@ -15,7 +15,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { store } = await tenant(request);
   const history = await reportWindow(store.id);
   const period = requestPeriod(request, store.ianaTimezone);
-  const [summary, snapshots, sync, pending, leaks] = await Promise.all([
+  const [summary, snapshots, sync, readiness, leaks] = await Promise.all([
     periodSummary(store.id, period),
     prisma.profitSnapshot.findMany({
       where: { storeId: store.id, date: { gte: period.start, lt: period.end } },
@@ -31,12 +31,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       orderBy: { finishedAt: "desc" },
       select: { finishedAt: true },
     }),
-    prisma.syncJob.count({
-      where: {
-        storeId: store.id,
-        status: { in: ["QUEUED", "RUNNING", "FAILED"] },
-      },
-    }),
+    reportReadiness(store.id, period),
     prisma.profitLeak.findMany({
       where: {
         storeId: store.id,
@@ -51,7 +46,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }),
   ]);
   return {
-    readiness: await reportReadiness(store.id, period),
+    readiness,
     usage: await monthlyOrderUsage(store.id),
     summary,
     period: period.key,
@@ -59,7 +54,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     timeZone: store.ianaTimezone,
     snapshots,
     sync,
-    pending,
+    pending: readiness.pending,
     leaks,
   };
 }

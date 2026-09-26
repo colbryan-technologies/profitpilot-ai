@@ -296,10 +296,7 @@ export async function summarizeDay(
   return { summary, orders, rows: dayRows };
 }
 
-export async function confidenceInputForStore(
-  storeId: string,
-  orders: OrderProfit[],
-): Promise<ConfidenceInput> {
+async function loadConfidenceContext(storeId: string) {
   const [
     lastOrderSync,
     adAccounts,
@@ -333,6 +330,33 @@ export async function confidenceInputForStore(
       where: { storeId, cogsSource: "MISSING", productId: { not: null } },
     }),
   ]);
+  return {
+    lastOrderSync,
+    adAccounts,
+    tax,
+    fee,
+    expenses,
+    refundCount,
+    txCount,
+    missingCogsProducts,
+  };
+}
+
+export async function confidenceInputForStore(
+  storeId: string,
+  orders: OrderProfit[],
+  context?: Awaited<ReturnType<typeof loadConfidenceContext>>,
+): Promise<ConfidenceInput> {
+  const {
+    lastOrderSync,
+    adAccounts,
+    tax,
+    fee,
+    expenses,
+    refundCount,
+    txCount,
+    missingCogsProducts,
+  } = context ?? (await loadConfidenceContext(storeId));
   const included = orders.filter((o) => !o.isExcluded);
   const totalQty = included.reduce(
     (a, o) => a + o.lines.reduce((b, l) => b + l.cogsQuantity, 0),
@@ -386,17 +410,21 @@ export async function confidenceInputForStore(
 export async function rebuildSnapshots(
   storeId: string,
   ymds: Iterable<string>,
+  onProgress?: (completed: number, total: number) => Promise<void>,
 ): Promise<number> {
   const ctx = await buildCalculationContext(storeId);
+  // These store-wide inputs are identical for every day in this rebuild.
+  const confidenceContext = await loadConfidenceContext(storeId);
+  const dates = Array.from(ymds);
   const store = await prisma.store.findUniqueOrThrow({
     where: { id: storeId },
     select: { currency: true },
   });
   let n = 0;
-  for (const ymd of ymds) {
+  for (const ymd of dates) {
     const { summary, orders } = await summarizeDay(storeId, ymd, ctx);
     const confidence = computeConfidence(
-      await confidenceInputForStore(storeId, orders),
+      await confidenceInputForStore(storeId, orders, confidenceContext),
     );
     const date = dayFromString(ymd);
     const data = {
@@ -427,6 +455,7 @@ export async function rebuildSnapshots(
       update: data,
     });
     n++;
+    if (n % 10 === 0 || n === dates.length) await onProgress?.(n, dates.length);
   }
   logger.debug({ storeId, days: n }, "snapshots rebuilt");
   return n;
@@ -510,7 +539,12 @@ export async function recalculateStore(
     }
   }
   await opts.onProgress?.("Rebuilding daily snapshots", 70);
-  const n = await rebuildSnapshots(storeId, allDays);
+  const n = await rebuildSnapshots(storeId, allDays, async (completed, total) =>
+    opts.onProgress?.(
+      "Rebuilding daily snapshots",
+      70 + Math.floor((29 * completed) / total),
+    ),
+  );
   await opts.onProgress?.("Done", 100);
   return { orders: processed, days: n };
 }

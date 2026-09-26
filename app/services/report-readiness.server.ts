@@ -152,7 +152,7 @@ export async function reportReadiness(
     result.warnings.push(
       "Today is still in progress; figures reflect imports completed so far.",
     );
-  return result;
+  return { ...result, pending };
 }
 export async function requireReadyReport(
   storeId: string,
