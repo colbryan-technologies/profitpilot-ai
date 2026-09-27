@@ -69,7 +69,7 @@ export async function action({ request }: ActionFunctionArgs) {
         await enqueueSync(store.id, store.shopDomain, "INCREMENTAL_ORDERS");
       else await startInitialSync(store.id, store.shopDomain);
     } else throw new Response("Unknown action", { status: 400 });
-    return "Work queued. Refresh this page to see progress.";
+    return "Work queued. Progress will update automatically.";
   });
 }
 export default function Health() {
