@@ -27,7 +27,7 @@ export function BackgroundWork({
   }, [active, navigation.state, revalidate, state]);
 
   return active ? (
-    <div className="pp-page">
+    <div className="pp-page pp-background-work">
       <Notice>
         {recalculating ? "Recalculating…" : "Updating your data…"} This page
         will update automatically when the work finishes.{" "}
